@@ -3246,7 +3246,6 @@ def test_condense_conversation_without_condenser_returns_409(
         client.app.dependency_overrides.clear()
 
 
-
 def test_prime_prompt_cache_returns_server_reported_cache_hit(
     client, mock_conversation_service, mock_event_service
 ):

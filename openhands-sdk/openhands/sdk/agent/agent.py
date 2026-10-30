@@ -707,7 +707,7 @@ class Agent(CriticMixin, ResponseDispatchMixin, AgentBase):
         self,
         messages: list[Message],
         *,
-        call_context,
+        call_context: LLMCallContext,
         on_token: ConversationTokenCallbackType | None = None,
         **kwargs,
     ) -> LLMResponse:

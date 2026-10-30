@@ -4102,14 +4102,13 @@ class TestEmitEventFromThreadFailures:
         assert scheduled[0] == finished.add_done_callback
 
 
-
 @pytest.mark.asyncio
-async def test_prime_prompt_cache_rejects_active_background_run(tmp_path):
-    stored = StoredConversation(
-        id=uuid4(),
-        workspace=LocalWorkspace(working_dir=str(tmp_path / "workspace")),
+async def test_prime_prompt_cache_rejects_active_background_run(
+    tmp_path, sample_stored_conversation
+):
+    service = EventService(
+        stored=sample_stored_conversation, conversations_dir=tmp_path
     )
-    service = EventService(stored=stored, conversations_dir=tmp_path)
     service._conversation = MagicMock()
     running_task = asyncio.create_task(asyncio.sleep(30))
     service._run_task = running_task

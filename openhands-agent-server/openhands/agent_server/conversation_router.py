@@ -289,7 +289,11 @@ async def prime_conversation_prompt_cache(
             verification_probe=request.verification_probe,
         )
     except ValueError as exc:
-        if str(exc) == "conversation_already_running":
+        if str(exc) in {
+            "conversation_already_running",
+            "prompt_cache_priming_requires_empty_conversation",
+            "prompt_cache_priming_requires_idle_conversation",
+        }:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail=str(exc)
             ) from exc
