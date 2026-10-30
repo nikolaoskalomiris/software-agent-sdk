@@ -686,6 +686,42 @@ class Agent(CriticMixin, ResponseDispatchMixin, AgentBase):
             mark_finished=lambda: self._mark_conversation_finished(state),
         )
 
+    def _prepare_llm_messages(
+        self,
+        conversation: LocalConversation,
+        additional_messages: list[Message] | None = None,
+    ) -> list[Message] | Condensation:
+        """Build the canonical LLM message list from the current conversation view.
+
+        Shared by normal agent execution and server-side prompt-cache priming.
+        """
+        self.llm.resolve_runtime_metadata()
+        return prepare_llm_messages(
+            conversation.state.view,
+            condenser=self.condenser,
+            additional_messages=additional_messages,
+            llm=self.llm,
+        )
+
+    def _generate_response(
+        self,
+        messages: list[Message],
+        *,
+        call_context,
+        on_token: ConversationTokenCallbackType | None = None,
+        **kwargs,
+    ) -> LLMResponse:
+        """Call the same tool-enabled LLM request used by Agent.step()."""
+        return self.llm.generate(
+            messages=messages,
+            tools=list(self.tools_map.values()),
+            store=False,
+            add_security_risk_prediction=True,
+            on_token=on_token,
+            call_context=call_context,
+            **kwargs,
+        )
+
     @observe(name="agent.step", ignore_inputs=["state", "on_event"])
     def step(
         self,
@@ -736,16 +772,8 @@ class Agent(CriticMixin, ResponseDispatchMixin, AgentBase):
         # LLM calls in this step (avoids shared mutable state on the LLM).
         call_context: LLMCallContext = conversation.get_llm_call_context()
 
-        # Establish route-aware runtime metadata (cached, no I/O on a hit)
-        # before the condenser decides a token threshold, so a routed model's
-        # real endpoint limit drives condensation on the first step.
-        self.llm.resolve_runtime_metadata()
-
-        # Prepare LLM messages from the cached, incrementally-maintained view.
-        # See https://github.com/OpenHands/software-agent-sdk/issues/3053.
-        _messages_or_condensation = prepare_llm_messages(
-            state.view, condenser=self.condenser, llm=self.llm
-        )
+        # Use the shared canonical preparation path also used by cache priming.
+        _messages_or_condensation = self._prepare_llm_messages(conversation)
 
         # Process condensation event before agent sampels another action
         if isinstance(_messages_or_condensation, Condensation):
@@ -783,13 +811,10 @@ class Agent(CriticMixin, ResponseDispatchMixin, AgentBase):
         )
 
         try:
-            llm_response = self.llm.generate(
-                messages=_messages,
-                tools=list(self.tools_map.values()),
-                store=False,
-                add_security_risk_prediction=True,
-                on_token=stream.token_callback,
+            llm_response = self._generate_response(
+                _messages,
                 call_context=call_context,
+                on_token=stream.token_callback,
             )
         except FunctionCallValidationError as e:
             logger.warning(f"LLM generated malformed function call: {e}")

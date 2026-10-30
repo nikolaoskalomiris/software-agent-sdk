@@ -6,7 +6,7 @@ from enum import Enum, StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from openhands.sdk.agent.acp_models import ACPModelInfo
 from openhands.sdk.agent.base import AgentBase
@@ -610,6 +610,39 @@ class StartGoalRequest(BaseModel):
     max_iterations: int = Field(
         default=10, ge=1, description="Maximum audit rounds before giving up."
     )
+
+
+class PromptCachePrimeRequest(BaseModel):
+    """Two distinct synthetic user messages used to verify prefix reuse."""
+
+    first_probe: str = Field(min_length=1, max_length=512)
+    verification_probe: str = Field(min_length=1, max_length=512)
+
+    @model_validator(mode="after")
+    def probes_must_differ(self) -> "PromptCachePrimeRequest":
+        if self.first_probe == self.verification_probe:
+            raise ValueError("first_probe and verification_probe must differ")
+        return self
+
+
+class PromptCachePrimeProbeMetrics(BaseModel):
+    """Provider-reported token usage and timing for one prefill request."""
+
+    prompt_tokens: int = Field(default=0, ge=0)
+    evaluated_prompt_tokens: int = Field(default=0, ge=0)
+    cache_read_tokens: int = Field(default=0, ge=0)
+    cache_write_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    elapsed_seconds: float = Field(default=0.0, ge=0)
+
+
+class PromptCachePrimeResponse(BaseModel):
+    """Results from two sequential prefill requests."""
+
+    model: str
+    prime: PromptCachePrimeProbeMetrics
+    verification: PromptCachePrimeProbeMetrics
+    cache_hit_verified: bool
 
 
 class AgentResponseResult(BaseModel):

@@ -22,6 +22,8 @@ from openhands.agent_server.models import (
     ConversationRuntimeInfo,
     ConversationRuntimeStatus,
     ConversationSortOrder,
+    PromptCachePrimeProbeMetrics,
+    PromptCachePrimeResponse,
     SendMessageRequest,
     StartConversationRequest,
 )
@@ -3242,3 +3244,99 @@ def test_condense_conversation_without_condenser_returns_409(
         )
     finally:
         client.app.dependency_overrides.clear()
+
+
+
+def test_prime_prompt_cache_returns_server_reported_cache_hit(
+    client, mock_conversation_service, mock_event_service
+):
+    conversation_id = uuid4()
+    mock_conversation_service.get_event_service.return_value = mock_event_service
+    mock_event_service.prime_prompt_cache.return_value = PromptCachePrimeResponse(
+        model="openai/openhands-local",
+        prime=PromptCachePrimeProbeMetrics(
+            prompt_tokens=42000,
+            evaluated_prompt_tokens=42000,
+            cache_read_tokens=0,
+            cache_write_tokens=42000,
+            output_tokens=1,
+            elapsed_seconds=12.5,
+        ),
+        verification=PromptCachePrimeProbeMetrics(
+            prompt_tokens=42001,
+            evaluated_prompt_tokens=900,
+            cache_read_tokens=41101,
+            cache_write_tokens=0,
+            output_tokens=1,
+            elapsed_seconds=1.2,
+        ),
+        cache_hit_verified=True,
+    )
+    client.app.dependency_overrides[get_conversation_service] = (
+        lambda: mock_conversation_service
+    )
+    try:
+        response = client.post(
+            f"/api/conversations/{conversation_id}/prompt-cache/prime",
+            json={
+                "first_probe": "cache probe one",
+                "verification_probe": "cache probe two",
+            },
+        )
+    finally:
+        client.app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["cache_hit_verified"] is True
+    assert payload["verification"]["cache_read_tokens"] == 41101
+    mock_conversation_service.get_event_service.assert_awaited_once_with(
+        conversation_id
+    )
+    mock_event_service.prime_prompt_cache.assert_awaited_once_with(
+        first_probe="cache probe one",
+        verification_probe="cache probe two",
+    )
+
+
+def test_prime_prompt_cache_rejects_running_conversation(
+    client, mock_conversation_service, mock_event_service
+):
+    conversation_id = uuid4()
+    mock_conversation_service.get_event_service.return_value = mock_event_service
+    mock_event_service.prime_prompt_cache.side_effect = ValueError(
+        "conversation_already_running"
+    )
+    client.app.dependency_overrides[get_conversation_service] = (
+        lambda: mock_conversation_service
+    )
+    try:
+        response = client.post(
+            f"/api/conversations/{conversation_id}/prompt-cache/prime",
+            json={
+                "first_probe": "cache probe one",
+                "verification_probe": "cache probe two",
+            },
+        )
+    finally:
+        client.app.dependency_overrides.clear()
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "conversation_already_running"
+
+
+def test_prompt_cache_prime_rejects_identical_probe_messages(
+    client, mock_conversation_service
+):
+    client.app.dependency_overrides[get_conversation_service] = (
+        lambda: mock_conversation_service
+    )
+    try:
+        response = client.post(
+            f"/api/conversations/{uuid4()}/prompt-cache/prime",
+            json={"first_probe": "same", "verification_probe": "same"},
+        )
+    finally:
+        client.app.dependency_overrides.clear()
+
+    assert response.status_code == 422

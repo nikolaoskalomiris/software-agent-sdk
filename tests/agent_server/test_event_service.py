@@ -4100,3 +4100,24 @@ class TestEmitEventFromThreadFailures:
         )
         scheduled = mock_loop.call_soon_threadsafe.call_args.args
         assert scheduled[0] == finished.add_done_callback
+
+
+
+@pytest.mark.asyncio
+async def test_prime_prompt_cache_rejects_active_background_run(tmp_path):
+    stored = StoredConversation(
+        id=uuid4(),
+        workspace=LocalWorkspace(working_dir=str(tmp_path / "workspace")),
+    )
+    service = EventService(stored=stored, conversations_dir=tmp_path)
+    service._conversation = MagicMock()
+    running_task = asyncio.create_task(asyncio.sleep(30))
+    service._run_task = running_task
+
+    try:
+        with pytest.raises(ValueError, match="conversation_already_running"):
+            await service.prime_prompt_cache("probe one", "probe two")
+    finally:
+        running_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await running_task

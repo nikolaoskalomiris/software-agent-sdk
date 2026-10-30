@@ -34,6 +34,8 @@ from openhands.agent_server.launch import launch_http_exception
 from openhands.agent_server.models import (
     INCLUDE_SKILLS_PARAM_TITLE,
     AgentResponseResult,
+    PromptCachePrimeRequest,
+    PromptCachePrimeResponse,
     AskAgentRequest,
     AskAgentResponse,
     ConversationInfo,
@@ -261,6 +263,43 @@ async def reprovision_local_conversation_runtime(
     return await get_local_conversation_runtime(
         conversation_id, request, conversation_service
     )
+
+
+@conversation_router.post(
+    "/{conversation_id}/prompt-cache/prime",
+    responses={
+        404: {"description": "Conversation not found"},
+        409: {"description": "Conversation is already running or not empty"},
+        422: {"description": "Prompt cache priming is unsupported for this agent"},
+    },
+)
+async def prime_conversation_prompt_cache(
+    conversation_id: UUID,
+    request: PromptCachePrimeRequest,
+    conversation_service: ConversationService = Depends(get_conversation_service),
+) -> PromptCachePrimeResponse:
+    """Prime the canonical native-agent prompt without adding a conversation turn."""
+    event_service = await conversation_service.get_event_service(conversation_id)
+    if event_service is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    try:
+        return await event_service.prime_prompt_cache(
+            first_probe=request.first_probe,
+            verification_probe=request.verification_probe,
+        )
+    except ValueError as exc:
+        if str(exc) == "conversation_already_running":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+            ) from exc
+        if str(exc) == "inactive_service":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
 
 
 @conversation_router.get(

@@ -24,11 +24,13 @@ from openhands.agent_server.models import (
     ConfirmationResponseRequest,
     EventPage,
     EventSortOrder,
+    PromptCachePrimeProbeMetrics,
+    PromptCachePrimeResponse,
     StoredConversation,
 )
 from openhands.agent_server.pub_sub import PubSub, Subscriber
 from openhands.agent_server.server_details_router import update_last_execution_time
-from openhands.sdk import LLM, AgentBase, Event, Message, TextContent, get_logger
+from openhands.sdk import Agent, LLM, AgentBase, Event, Message, TextContent, get_logger
 from openhands.sdk.agent import ACPAgent
 from openhands.sdk.agent.acp_agent import ACTIVITY_SIGNAL_INTERVAL
 from openhands.sdk.agent.acp_file_credentials import (
@@ -81,6 +83,7 @@ from openhands.sdk.event.llm_completion_log import LLMCompletionLogEvent
 from openhands.sdk.git.exceptions import GitCommandError, GitRepositoryError
 from openhands.sdk.git.utils import run_git_command, validate_git_repository
 from openhands.sdk.io import LocalFileStore
+from openhands.sdk.llm.call_context import llm_call_context_scope
 from openhands.sdk.llm.streaming import LLMStreamChunk
 from openhands.sdk.mcp.utils import MCPToolProvider
 from openhands.sdk.security.analyzer import SecurityAnalyzerBase
@@ -527,6 +530,129 @@ class EventService:
                 self.renew_lease()
         except asyncio.CancelledError:
             raise
+
+    async def prime_prompt_cache(
+        self, first_probe: str, verification_probe: str
+    ) -> PromptCachePrimeResponse:
+        """Prime the native agent prompt, then verify provider-reported reuse.
+
+        Synthetic user messages are supplied only to the LLM request. They are
+        never written to the event log and no generated tool calls are executed.
+        """
+        if not self._conversation or self._closing:
+            raise ValueError("inactive_service")
+
+        async with self._run_lock:
+            if self._closing:
+                raise ValueError("inactive_service")
+            if (self._run_task is not None and not self._run_task.done()) or (
+                self._goal_loop_task is not None and not self._goal_loop_task.done()
+            ):
+                raise ValueError("conversation_already_running")
+            if (
+                await self._get_execution_status()
+                == ConversationExecutionStatus.RUNNING
+            ):
+                raise ValueError("conversation_already_running")
+
+            conversation = self._conversation
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                self._run_executor,
+                self._prime_prompt_cache_sync,
+                conversation,
+                first_probe,
+                verification_probe,
+            )
+
+    @staticmethod
+    def _prime_prompt_cache_sync(
+        conversation: LocalConversation,
+        first_probe: str,
+        verification_probe: str,
+    ) -> PromptCachePrimeResponse:
+        """Run two canonical one-token LLM requests and retain metrics only."""
+        agent = conversation.agent
+        if not isinstance(agent, Agent):
+            raise ValueError("prompt_cache_priming_requires_native_agent")
+
+        # Match the normal lazy initialization lifecycle before building messages:
+        # plugins, MCP tools, system prompt, hooks, and SessionStart context.
+        conversation._ensure_agent_ready()
+
+        with conversation._state:
+            if conversation._state.last_user_message_id is not None:
+                raise ValueError("prompt_cache_priming_requires_empty_conversation")
+            if (
+                conversation._state.execution_status
+                != ConversationExecutionStatus.IDLE
+            ):
+                raise ValueError("prompt_cache_priming_requires_idle_conversation")
+
+        call_context = conversation.get_llm_call_context()
+        llm = agent.llm
+
+        def run_probe(probe_text: str) -> PromptCachePrimeProbeMetrics:
+            messages = agent._prepare_llm_messages(
+                conversation,
+                additional_messages=[
+                    Message(
+                        role="user",
+                        content=[TextContent(text=probe_text)],
+                    )
+                ],
+            )
+            if not isinstance(messages, list):
+                raise ValueError(
+                    "prompt_cache_priming_requires_uncondensed_context"
+                )
+
+            before_usage = llm.metrics.get_snapshot().accumulated_token_usage
+            token_limit = (
+                {"max_output_tokens": 1}
+                if llm.uses_responses_api()
+                else {"max_tokens": 1}
+            )
+            started = time.perf_counter()
+            response = agent._generate_response(
+                messages,
+                call_context=call_context,
+                on_token=None,
+                **token_limit,
+            )
+            elapsed = max(0.0, time.perf_counter() - started)
+            after_usage = response.metrics.accumulated_token_usage
+
+            def usage_delta(field: str) -> int:
+                current = int(getattr(after_usage, field, 0) or 0)
+                previous = int(getattr(before_usage, field, 0) or 0)
+                return max(0, current - previous)
+
+            prompt_tokens = usage_delta("prompt_tokens")
+            cache_read_tokens = usage_delta("cache_read_tokens")
+            return PromptCachePrimeProbeMetrics(
+                prompt_tokens=prompt_tokens,
+                evaluated_prompt_tokens=max(
+                    0, prompt_tokens - cache_read_tokens
+                ),
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=usage_delta("cache_write_tokens"),
+                output_tokens=usage_delta("completion_tokens"),
+                elapsed_seconds=elapsed,
+            )
+
+        # Agent.step() uses this scope and this exact per-conversation context.
+        # Deliberately discard both generated messages: no response dispatch.
+        with llm_call_context_scope(call_context):
+            prime = run_probe(first_probe)
+            verification = run_probe(verification_probe)
+
+        return PromptCachePrimeResponse(
+            model=llm.model,
+            prime=prime,
+            verification=verification,
+            cache_hit_verified=verification.cache_read_tokens > 0,
+        )
 
     def get_conversation(self):
         if not self._conversation:
