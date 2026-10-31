@@ -61,8 +61,19 @@ def _probe_auto_title_spans() -> dict[str, Any]:
     def mocked_completion(**kwargs: Any):
         return instrumented_completion(**{**kwargs, "mock_response": "Fix Auth Bug"})
 
-    llm = LLM(usage_id="probe-llm", model="gpt-4o", api_key=SecretStr("test-key"))
-    agent = Agent(llm=llm, tools=[])
+    agent_llm = LLM(
+        usage_id="probe-llm",
+        model="gpt-4o",
+        api_key=SecretStr("test-key"),
+        base_url="https://agent.example/v1",
+    )
+    title_llm = LLM(
+        usage_id="title-probe-llm",
+        model="gpt-4o",
+        api_key=SecretStr("test-key"),
+        base_url="https://title.example/v1",
+    )
+    agent = Agent(llm=agent_llm, tools=[])
     conversation = Conversation(
         agent=agent,
         callbacks=[],
@@ -103,7 +114,7 @@ def _probe_auto_title_spans() -> dict[str, Any]:
             patch.object(
                 AutoTitleSubscriber,
                 "_load_title_llm",
-                return_value=llm,
+                return_value=title_llm,
             ),
             patch(
                 "openhands.sdk.llm.llm.litellm_completion",

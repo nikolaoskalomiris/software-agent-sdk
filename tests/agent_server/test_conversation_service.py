@@ -3591,12 +3591,20 @@ class TestAutoTitle:
         stays non-fatal and falls back to truncation."""
         # This explicitly configured title profile uses the LLM. A failure is
         # swallowed into a message-derived title and reported through on_error.
-        service = self._make_service(title_llm_profile="title-model")
+        service = self._make_service(
+            title_llm_profile="title-model",
+            llm_base_url="https://agent.example/v1",
+        )
+        title_llm = LLM(
+            model="gpt-4o",
+            base_url="https://title.example/v1",
+            usage_id="title-llm",
+        )
         with (
             patch.object(
                 AutoTitleSubscriber,
                 "_load_title_llm",
-                return_value=service._conversation.agent.llm,
+                return_value=title_llm,
             ),
             patch(
                 "openhands.sdk.llm.llm.LLM.completion",
