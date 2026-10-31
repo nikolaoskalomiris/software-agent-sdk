@@ -2691,13 +2691,11 @@ class AutoTitleSubscriber(Subscriber):
         if not message_text:
             return
 
-        # Precedence: title_llm_profile (if configured and loads) → agent.llm →
-        # truncation. This keeps auto-titling non-breaking for consumers who
-        # don't configure title_llm_profile.
+        # Only use an explicitly configured title profile. Falling back to the
+        # agent's LLM would run a competing completion before the first agent
+        # response and evict the primed prefix on single-slot local servers.
         conversation = self.service._conversation
         title_llm = self._load_title_llm()
-        if title_llm is None:
-            title_llm = conversation.agent.llm if conversation else None
 
         # Surface an LLM failure during auto-titling to the UI (issue #16686);
         # generation itself stays non-fatal and falls back to truncation.
@@ -2736,9 +2734,8 @@ class AutoTitleSubscriber(Subscriber):
         """Load the LLM for title generation from profile store.
 
         Returns:
-            LLM instance if title_llm_profile is configured and loads
-            successfully, None otherwise. When None is returned, the caller
-            falls back to the agent's LLM (and then to message truncation).
+            The configured title LLM when its profile loads, or None to use
+            the message-derived title without making an agent-model request.
         """
         profile_name = self.service.stored.title_llm_profile
         if not profile_name:
@@ -2754,7 +2751,7 @@ class AutoTitleSubscriber(Subscriber):
         except (FileNotFoundError, ValueError) as e:
             logger.warning(
                 f"Failed to load title LLM profile '{profile_name}': {e}. "
-                "Falling back to the agent's LLM."
+                "Falling back to a message-derived title."
             )
             return None
 

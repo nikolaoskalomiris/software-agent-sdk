@@ -77,6 +77,7 @@ def _probe_auto_title_spans() -> dict[str, Any]:
         initial_message=None,
         metrics=None,
         title=None,
+        title_llm_profile="trace-title-profile",
     )
     service = AsyncMock(spec=EventService)
     service.stored = stored
@@ -98,8 +99,16 @@ def _probe_auto_title_spans() -> dict[str, Any]:
     )
 
     async def drive() -> None:
-        with patch(
-            "openhands.sdk.llm.llm.litellm_completion", side_effect=mocked_completion
+        with (
+            patch.object(
+                AutoTitleSubscriber,
+                "_load_title_llm",
+                return_value=llm,
+            ),
+            patch(
+                "openhands.sdk.llm.llm.litellm_completion",
+                side_effect=mocked_completion,
+            ),
         ):
             await AutoTitleSubscriber(service=service)(event)
             for _ in range(250):

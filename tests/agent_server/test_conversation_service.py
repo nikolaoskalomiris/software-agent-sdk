@@ -3581,13 +3581,19 @@ class TestAutoTitle:
         """When the title LLM call fails, the error is surfaced to the UI via
         the EventService error-event helper (issue #16686) — while auto-titling
         stays non-fatal and falls back to truncation."""
-        service = self._make_service()
-
-        # Let the real title utils run; only the LLM call fails, so the error
-        # is swallowed into a fallback title and reported through on_error.
-        with patch(
-            "openhands.sdk.llm.llm.LLM.completion",
-            side_effect=Exception("model does not exist"),
+        # This explicitly configured title profile uses the LLM. A failure is
+        # swallowed into a message-derived title and reported through on_error.
+        service = self._make_service(title_llm_profile="title-model")
+        with (
+            patch.object(
+                AutoTitleSubscriber,
+                "_load_title_llm",
+                return_value=service._conversation.agent.llm,
+            ),
+            patch(
+                "openhands.sdk.llm.llm.LLM.completion",
+                side_effect=Exception("model does not exist"),
+            ),
         ):
             subscriber = AutoTitleSubscriber(service=service)
             await subscriber(self._user_message_event())
@@ -3648,17 +3654,16 @@ class TestAutoTitle:
         service.save_meta.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_autotitle_falls_back_to_agent_llm_when_profile_not_found(self):
-        """Missing profile → fall back to agent.llm (non-breaking behavior)."""
+    async def test_autotitle_falls_back_to_message_title_when_profile_not_found(self):
+        """A missing title profile must not borrow the agent's LLM."""
         service = self._make_service(title_llm_profile="nonexistent-profile")
-        agent_llm = service._conversation.agent.llm
 
         with (
             patch(
                 "openhands.agent_server.persistence.store.get_llm_profile_store"
             ) as MockStore,
             patch(
-                self._GENERATE_TITLE_PATH, return_value="✨ Agent LLM Title"
+                self._GENERATE_TITLE_PATH, return_value="Fix the login bug"
             ) as mock_generate_title,
         ):
             mock_store_instance = MockStore.return_value
@@ -3670,45 +3675,39 @@ class TestAutoTitle:
             await subscriber(self._user_message_event())
             await self._drain_title_task(lambda: service.stored.title is not None)
 
-            # Failed profile load → falls back to agent.llm
             assert mock_generate_title.called
-            assert mock_generate_title.call_args.args[1] is agent_llm
+            assert mock_generate_title.call_args.args[1] is None
 
-        assert service.stored.title == "✨ Agent LLM Title"
+        assert service.stored.title == "Fix the login bug"
         service.save_meta.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_autotitle_no_profile_uses_agent_llm(self):
-        """No profile configured → use agent.llm (preserves existing behavior)."""
+    async def test_autotitle_without_title_profile_does_not_call_agent_llm(self):
+        """The default title path must not consume the agent's model endpoint."""
         service = self._make_service(title_llm_profile=None)
-        agent_llm = service._conversation.agent.llm
 
         with patch(
-            self._GENERATE_TITLE_PATH, return_value="✨ Agent LLM Title"
-        ) as mock_generate_title:
+            "openhands.sdk.llm.llm.LLM.generate", autospec=True
+        ) as mock_generate:
             subscriber = AutoTitleSubscriber(service=service)
-            await subscriber(self._user_message_event())
+            await subscriber(self._user_message_event("Fix the login bug"))
             await self._drain_title_task(lambda: service.stored.title is not None)
 
-            # No profile → agent.llm is used (backwards compatible)
-            assert mock_generate_title.called
-            assert mock_generate_title.call_args.args[1] is agent_llm
-
-        assert service.stored.title == "✨ Agent LLM Title"
+        mock_generate.assert_not_called()
+        assert service.stored.title == "Fix the login bug"
         service.save_meta.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_autotitle_handles_profile_load_value_error(self):
-        """Profile load ValueError → fall back to agent.llm."""
+        """Profile load errors fall back to a message-derived title."""
         service = self._make_service(title_llm_profile="corrupted-profile")
-        agent_llm = service._conversation.agent.llm
 
         with (
             patch(
                 "openhands.agent_server.persistence.store.get_llm_profile_store"
             ) as MockStore,
             patch(
-                self._GENERATE_TITLE_PATH, return_value="✨ Agent LLM Title"
+                self._GENERATE_TITLE_PATH, return_value="Fix the login bug"
             ) as mock_generate_title,
         ):
             mock_store_instance = MockStore.return_value
@@ -3719,9 +3718,9 @@ class TestAutoTitle:
             await self._drain_title_task(lambda: service.stored.title is not None)
 
             assert mock_generate_title.called
-            assert mock_generate_title.call_args.args[1] is agent_llm
+            assert mock_generate_title.call_args.args[1] is None
 
-        assert service.stored.title == "✨ Agent LLM Title"
+        assert service.stored.title == "Fix the login bug"
         service.save_meta.assert_called_once()
 
     @pytest.mark.asyncio
