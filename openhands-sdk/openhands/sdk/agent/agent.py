@@ -901,7 +901,7 @@ class Agent(CriticMixin, ResponseDispatchMixin, AgentBase):
             call_context.session_id or "unknown",
             llm_response.id,
             response_type.value,
-            len(message.tool_calls),
+            len(message.tool_calls or []),
             len(message.content),
             bool(
                 message.reasoning_content
@@ -1129,7 +1129,7 @@ class Agent(CriticMixin, ResponseDispatchMixin, AgentBase):
             call_context.session_id or "unknown",
             llm_response.id,
             response_type.value,
-            len(message.tool_calls),
+            len(message.tool_calls or []),
             len(message.content),
             bool(
                 message.reasoning_content

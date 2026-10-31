@@ -39,6 +39,9 @@ class DummyLLM(LLM):
             raw_response=MagicMock(spec=ModelResponse, id="c1"),
         )
 
+    async def acompletion(self, *, messages, tools=None, **kwargs) -> LLMResponse:  # type: ignore[override]
+        return self.completion(messages=messages, tools=tools, **kwargs)
+
     def responses(self, *, messages, tools=None, **kwargs) -> LLMResponse:  # type: ignore[override]
         self._calls.append("responses")
         self._call_kwargs.append(kwargs)
@@ -88,6 +91,22 @@ def test_agent_step_routes_to_responses_or_completion(force_responses, expected)
         }
     ]
     assert any(isinstance(e, MessageEvent) for e in events)
+
+
+@pytest.mark.asyncio
+async def test_agent_astep_accepts_response_without_tool_calls():
+    """An ordinary async text/empty response may have tool_calls=None."""
+    llm = DummyLLM(model="test-model", force_responses=False)
+    agent = Agent(llm=llm, tools=[])
+    convo = Conversation(agent=agent)
+    convo._ensure_agent_ready()
+    convo.send_message("Hello")
+
+    events = []
+    await agent.astep(convo, on_event=events.append)
+
+    assert llm._calls == ["completion"]
+    assert any(isinstance(event, MessageEvent) for event in events)
 
 
 class ModelGateLLM(LLM):
