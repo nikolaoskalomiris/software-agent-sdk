@@ -442,7 +442,9 @@ class AgentBase(DiscriminatedUnionMixin, ABC):
         per-conversation signals. The dynamic-tier fields reuse
         ``AgentContext._resolve_dynamic_data`` so skills are model-gated and
         secrets merged exactly as ``get_system_message_suffix`` does;
-        ``additional_secret_infos`` mirrors ``get_dynamic_context(state)``.
+        ``additional_secret_infos`` and ``working_dir`` mirror the values supplied
+        by ``get_dynamic_context(state)``. Static prompt snapshots leave ``working_dir``
+        unset so conversation-specific paths never enter the cache-stable block.
         """
         agent_context = self.agent_context
         # Mirror get_dynamic_context's temp-context path: with no agent_context but

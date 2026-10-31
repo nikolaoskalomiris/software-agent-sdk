@@ -21,8 +21,8 @@ __all__ = [
     "CustomSuffixSection",
     "DateTimeSection",
     "MemoryContextSection",
-    "WorkingDirectorySection",
     "RepoContextSection",
+    "WorkingDirectorySection",
 ]
 
 
