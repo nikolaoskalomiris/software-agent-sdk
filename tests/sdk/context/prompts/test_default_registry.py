@@ -403,7 +403,10 @@ def test_registry_dynamic_matches_legacy_no_context_secrets(tmp_path: Path) -> N
     state.secret_registry.update_secrets({"API_KEY": "unused-in-snapshot"})
     additional = state.secret_registry.get_secret_infos()
 
-    ctx = agent._build_prompt_context(additional_secret_infos=additional)
+    ctx = agent._build_prompt_context(
+        additional_secret_infos=additional,
+        working_dir=state.workspace.working_dir,
+    )
     registry = create_registry().build(ctx).dynamic or ""
     legacy = agent.get_dynamic_context(state) or ""
 
