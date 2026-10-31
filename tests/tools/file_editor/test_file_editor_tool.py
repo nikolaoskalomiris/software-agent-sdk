@@ -198,7 +198,10 @@ def test_file_editor_tool_description_is_stable_across_workspaces(tmp_path):
     assert tool_a.description == tool_b.description
     assert str(workspace_a) not in tool_a.description
     assert str(workspace_b) not in tool_b.description
-    assert "Custom editing tool for viewing, creating and editing files" in tool_a.description
+    assert (
+        "Custom editing tool for viewing, creating and editing files"
+        in tool_a.description
+    )
 
 
 def test_file_editor_tool_openai_format_omits_workspace_path(tmp_path):

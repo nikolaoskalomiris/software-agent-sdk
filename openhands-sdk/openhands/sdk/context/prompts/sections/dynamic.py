@@ -141,10 +141,10 @@ class WorkingDirectorySection:
 
     def render(self, ctx: PromptContext) -> str | None:
         return (
-            "<WORKING_DIRECTORY>\\n"
-            f"Your current working directory is: {ctx.working_dir}\\n"
+            "<WORKING_DIRECTORY>\n"
+            f"Your current working directory is: {ctx.working_dir}\n"
             "When exploring project structure, start with this directory "
-            "instead of the root filesystem.\\n"
+            "instead of the root filesystem.\n"
             "</WORKING_DIRECTORY>"
         )
 

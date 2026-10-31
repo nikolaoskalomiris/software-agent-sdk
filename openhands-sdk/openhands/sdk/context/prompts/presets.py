@@ -6,8 +6,8 @@
 reproduces ``AgentBase.static_system_message``. The ``"planning"`` preset is a
 distinct standalone composition (ported from ``system_prompt_planning.j2``) that
 omits the default OpenHands sections. The dynamic-tier sections are **shared** --
-repo/skills/suffix/secrets/working-directory/datetime are preset-independent -- so a planning agent
-with an ``agent_context`` still gets its dynamic block.
+repo/skills/suffix/secrets/working-directory/datetime are preset-independent -- so
+a planning agent with an ``agent_context`` still gets its dynamic block.
 """
 
 from dataclasses import dataclass, field
