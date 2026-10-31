@@ -10,6 +10,7 @@ import zipfile
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -4100,6 +4101,91 @@ class TestEmitEventFromThreadFailures:
         )
         scheduled = mock_loop.call_soon_threadsafe.call_args.args
         assert scheduled[0] == finished.add_done_callback
+
+
+def test_prime_prompt_cache_uses_agent_after_lazy_initialization(monkeypatch):
+    zero_usage = SimpleNamespace(
+        prompt_tokens=0,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+        completion_tokens=0,
+    )
+    response_usage = SimpleNamespace(
+        prompt_tokens=32,
+        cache_read_tokens=0,
+        cache_write_tokens=32,
+        completion_tokens=1,
+    )
+
+    class FakeLLM:
+        model = "test-model"
+
+        def __init__(self):
+            self.metrics = MagicMock()
+            self.metrics.get_snapshot.return_value = SimpleNamespace(
+                accumulated_token_usage=zero_usage
+            )
+
+        @staticmethod
+        def uses_responses_api():
+            return False
+
+    class FakeAgent:
+        def __init__(self, initialized: bool):
+            self.initialized = initialized
+            self.llm = FakeLLM()
+            self.generate_calls = 0
+
+        @staticmethod
+        def _prepare_llm_messages(conversation, additional_messages=None):
+            return []
+
+        def _generate_response(
+            self, messages, *, call_context, on_token=None, **kwargs
+        ):
+            assert self.initialized, (
+                "cache priming used the stale Agent captured "
+                "before lazy initialization"
+            )
+            self.generate_calls += 1
+            return SimpleNamespace(
+                metrics=SimpleNamespace(accumulated_token_usage=response_usage)
+            )
+
+    stale_agent = FakeAgent(initialized=False)
+    initialized_agent = FakeAgent(initialized=True)
+    state = MagicMock()
+    state.last_user_message_id = None
+    state.execution_status = ConversationExecutionStatus.IDLE
+
+    class FakeConversation:
+        def __init__(self):
+            self.agent = stale_agent
+            self._state = state
+
+        def _ensure_agent_ready(self):
+            # Mirrors plugin loading, which can replace the Agent with model_copy().
+            self.agent = initialized_agent
+
+        @staticmethod
+        def get_llm_call_context():
+            return object()
+
+    monkeypatch.setattr("openhands.agent_server.event_service.Agent", FakeAgent)
+    monkeypatch.setattr(
+        "openhands.agent_server.event_service.llm_call_context_scope",
+        lambda _call_context: contextlib.nullcontext(),
+    )
+
+    result = EventService._prime_prompt_cache_sync(
+        FakeConversation(),
+        "first probe",
+        "verification probe",
+    )
+
+    assert stale_agent.generate_calls == 0
+    assert initialized_agent.generate_calls == 2
+    assert result.model == "test-model"
 
 
 @pytest.mark.asyncio

@@ -572,13 +572,17 @@ class EventService:
         verification_probe: str,
     ) -> PromptCachePrimeResponse:
         """Run two canonical one-token LLM requests and retain metrics only."""
-        agent = conversation.agent
-        if not isinstance(agent, Agent):
+        if not isinstance(conversation.agent, Agent):
             raise ValueError("prompt_cache_priming_requires_native_agent")
 
         # Match the normal lazy initialization lifecycle before building messages:
         # plugins, MCP tools, system prompt, hooks, and SessionStart context.
         conversation._ensure_agent_ready()
+
+        # Plugin loading can replace conversation.agent with an initialized
+        # model_copy(). Capture the active instance after lazy initialization;
+        # the pre-initialization reference has no populated tools_map.
+        agent = conversation.agent
 
         with conversation._state:
             if conversation._state.last_user_message_id is not None:
