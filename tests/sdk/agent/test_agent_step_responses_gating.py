@@ -79,7 +79,7 @@ def test_agent_step_routes_to_responses_or_completion(force_responses, expected)
             events.append(e)
 
     # One step should call the appropriate method and emit an assistant message
-    agent.step(convo, on_event=on_event)
+    convo.agent.step(convo, on_event=on_event)
 
     assert llm._calls == [expected]
     assert llm._call_kwargs == [
@@ -103,7 +103,7 @@ async def test_agent_astep_accepts_response_without_tool_calls():
     convo.send_message("Hello")
 
     events = []
-    await agent.astep(convo, on_event=events.append)
+    await convo.agent.astep(convo, on_event=events.append)
 
     assert llm._calls == ["completion"]
     assert any(isinstance(event, MessageEvent) for event in events)
@@ -163,7 +163,7 @@ def test_agent_step_model_features_gate_to_responses_or_completion(model, expect
         if isinstance(e, MessageEvent):
             events.append(e)
 
-    agent.step(convo, on_event=on_event)
+    convo.agent.step(convo, on_event=on_event)
 
     assert llm._calls == [expected]
     assert any(isinstance(e, MessageEvent) for e in events)
