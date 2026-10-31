@@ -3436,8 +3436,16 @@ class TestAutoTitle:
         prompt: str | None = None,
         llm_model: str = "gpt-4o",
         llm_usage_id: str = "test-llm",
+        llm_base_url: str | None = None,
     ) -> AsyncMock:
-        agent = Agent(llm=LLM(model=llm_model, usage_id=llm_usage_id), tools=[])
+        agent = Agent(
+            llm=LLM(
+                model=llm_model,
+                base_url=llm_base_url,
+                usage_id=llm_usage_id,
+            ),
+            tools=[],
+        )
         stored = StoredConversation(
             id=uuid4(),
             workspace=LocalWorkspace(working_dir="workspace/project"),
@@ -3651,6 +3659,38 @@ class TestAutoTitle:
             assert mock_generate_title.call_args.args[1] is mock_llm
 
         assert service.stored.title == "✨ Profile LLM Title"
+        service.save_meta.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_autotitle_skips_profile_when_it_shares_agent_backend(self):
+        """A title profile on the agent endpoint must not evict its prompt cache."""
+        endpoint = "http://127.0.0.1:8090/v1/"
+        service = self._make_service(
+            title_llm_profile="same-backend",
+            llm_base_url=endpoint,
+        )
+        title_llm = LLM(
+            model="different-local-model-alias",
+            base_url=endpoint.rstrip("/"),
+            usage_id="title-llm",
+        )
+
+        with (
+            patch(
+                "openhands.agent_server.persistence.store.get_llm_profile_store"
+            ) as MockStore,
+            patch(
+                self._GENERATE_TITLE_PATH, return_value="Fix the login bug"
+            ) as mock_generate_title,
+        ):
+            MockStore.return_value.load.return_value = title_llm
+            subscriber = AutoTitleSubscriber(service=service)
+            await subscriber(self._user_message_event("Fix the login bug"))
+            await self._drain_title_task(lambda: service.stored.title is not None)
+
+        mock_generate_title.assert_called_once()
+        assert mock_generate_title.call_args.args[1] is None
+        assert service.stored.title == "Fix the login bug"
         service.save_meta.assert_called_once()
 
     @pytest.mark.asyncio

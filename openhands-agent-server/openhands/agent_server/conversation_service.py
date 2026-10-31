@@ -2696,6 +2696,13 @@ class AutoTitleSubscriber(Subscriber):
         # response and evict the primed prefix on single-slot local servers.
         conversation = self.service._conversation
         title_llm = self._load_title_llm()
+        agent_llm = getattr(conversation.agent, "llm", None) if conversation else None
+        if title_llm is not None and self._shares_backend(title_llm, agent_llm):
+            logger.info(
+                "Configured title LLM shares the agent backend; deriving the title "
+                "from the first message to preserve the agent prompt cache."
+            )
+            title_llm = None
 
         # Surface an LLM failure during auto-titling to the UI (issue #16686);
         # generation itself stays non-fatal and falls back to truncation.
@@ -2729,6 +2736,21 @@ class AutoTitleSubscriber(Subscriber):
                 )
 
         asyncio.create_task(_generate_and_save())
+
+    @staticmethod
+    def _shares_backend(title_llm: LLM, agent_llm: Any) -> bool:
+        """Return whether title and agent LLM configurations share a backend."""
+        title_base_url = (title_llm.base_url or "").rstrip("/")
+        agent_base_url = (getattr(agent_llm, "base_url", None) or "").rstrip("/")
+        if title_base_url and agent_base_url:
+            return title_base_url.casefold() == agent_base_url.casefold()
+        if not title_base_url and not agent_base_url:
+            agent_model = getattr(agent_llm, "model", None)
+            return (
+                isinstance(agent_model, str)
+                and title_llm.model.casefold() == agent_model.casefold()
+            )
+        return False
 
     def _load_title_llm(self) -> LLM | None:
         """Load the LLM for title generation from profile store.

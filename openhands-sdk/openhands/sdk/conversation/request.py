@@ -415,9 +415,10 @@ class ConversationConfig(BaseModel):
         description=(
             "Optional dedicated LLM profile for title generation. If set and "
             "loaded from LLMProfileStore (~/.openhands/profiles/), that LLM "
-            "generates the title independently of the agent's main model. If "
-            "unset or unavailable, the title is derived directly from the "
-            "first user message without an additional LLM request."
+            "generates the title when it uses a separate backend. If it shares "
+            "the agent's backend, the title is derived directly from the first "
+            "user message to avoid displacing the agent's prompt cache. If unset "
+            "or unavailable, the title is also derived directly from the message."
         ),
     )
     prompt: str | None = Field(
