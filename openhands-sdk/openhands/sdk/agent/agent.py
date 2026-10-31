@@ -619,7 +619,10 @@ class Agent(CriticMixin, ResponseDispatchMixin, AgentBase):
         # Get secret infos from conversation's secret_registry
         secret_infos = state.secret_registry.get_secret_infos()
 
-        ctx = self._build_prompt_context(additional_secret_infos=secret_infos)
+        ctx = self._build_prompt_context(
+            additional_secret_infos=secret_infos,
+            working_dir=state.workspace.working_dir,
+        )
         # The dynamic tier is preset-independent; fall back to the default tier for a
         # custom Jinja template (preset None), as before.
         preset = self._prompt_preset or PromptPreset.DEFAULT

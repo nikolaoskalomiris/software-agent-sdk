@@ -242,22 +242,12 @@ class FileEditorTool(ToolDefinition[FileEditorAction, FileEditorObservation]):
         else:
             tool_description = TOOL_DESCRIPTION
 
-        # Add working directory information to the tool description
-        # to guide the agent to use the correct directory instead of root
-        working_dir = conv_state.workspace.working_dir
-        enhanced_description = (
-            f"{tool_description}\n\n"
-            f"Your current working directory is: {working_dir}\n"
-            f"When exploring project structure, start with this directory "
-            f"instead of the root filesystem."
-        )
-
         # Initialize the parent Tool with the executor
         return [
             cls(
                 action_type=FileEditorAction,
                 observation_type=FileEditorObservation,
-                description=enhanced_description,
+                description=tool_description,
                 annotations=ToolAnnotations(
                     title="file_editor",
                     readOnlyHint=False,

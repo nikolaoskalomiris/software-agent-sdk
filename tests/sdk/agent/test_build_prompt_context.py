@@ -4,6 +4,8 @@
 ``static_system_message`` produces and asserts the snapshot reproduces them.
 """
 
+from uuid import uuid4
+
 import pytest
 
 import openhands.sdk.agent.base as agent_base
@@ -13,6 +15,8 @@ from openhands.sdk.context.prompts.section import Platform, PromptContext
 from openhands.sdk.llm import LLM
 from openhands.sdk.skills import Skill
 from openhands.sdk.tool import Tool
+from openhands.sdk.conversation.state import ConversationState
+from openhands.sdk.workspace import LocalWorkspace
 
 
 def _make_llm(model: str = "test-model") -> LLM:
@@ -96,6 +100,25 @@ def test_tool_names_snapshot() -> None:
 def test_working_dir_is_none_in_bridge() -> None:
     agent = Agent(llm=_make_llm(), tools=[])
     assert agent._build_prompt_context().working_dir is None
+
+
+def test_dynamic_context_includes_conversation_working_directory(tmp_path) -> None:
+    agent = Agent(llm=_make_llm(), tools=[])
+    state = ConversationState.create(
+        id=uuid4(),
+        agent=agent,
+        workspace=LocalWorkspace(working_dir=str(tmp_path)),
+    )
+
+    dynamic_context = agent.get_dynamic_context(state)
+
+    assert dynamic_context is not None
+    assert "<WORKING_DIRECTORY>" in dynamic_context
+    assert f"Your current working directory is: {tmp_path}" in dynamic_context
+    assert (
+        "When exploring project structure, start with this directory "
+        "instead of the root filesystem."
+    ) in dynamic_context
 
 
 def test_platform_is_snapshot() -> None:

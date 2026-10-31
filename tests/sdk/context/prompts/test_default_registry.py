@@ -233,7 +233,10 @@ def test_registry_dynamic_matches_legacy_with_secret_registry(tmp_path: Path) ->
     state.secret_registry.update_secrets({"GITHUB_TOKEN": "unused-in-snapshot"})
 
     additional = state.secret_registry.get_secret_infos()
-    ctx = agent._build_prompt_context(additional_secret_infos=additional)
+    ctx = agent._build_prompt_context(
+        additional_secret_infos=additional,
+        working_dir=state.workspace.working_dir,
+    )
     registry = create_registry().build(ctx).dynamic or ""
     legacy = agent.get_dynamic_context(state) or ""
     assert _canonical_gaps(registry) == _canonical_gaps(legacy)
@@ -314,9 +317,12 @@ def test_dynamic_sections_render_into_dynamic_block() -> None:
         now="2025-01-01T00:00:00+00:00",
         custom_suffix="Follow conventions.",
         secret_infos=(("GITHUB_TOKEN", None),),
+        working_dir="C:/workspace",
     )
     blocks = create_registry().build(ctx)
     assert "<CURRENT_DATETIME>" in (blocks.dynamic or "")
+    assert "<WORKING_DIRECTORY>" in (blocks.dynamic or "")
+    assert "C:/workspace" in (blocks.dynamic or "")
     assert "<CUSTOM_SECRETS>" in (blocks.dynamic or "")
     assert "Follow conventions." in (blocks.dynamic or "")
     assert "<CURRENT_DATETIME>" not in blocks.static

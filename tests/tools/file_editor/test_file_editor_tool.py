@@ -185,46 +185,31 @@ def test_file_editor_tool_view_directory():
         assert "file2.txt" in result.text
 
 
-def test_file_editor_tool_includes_working_directory_in_description():
-    """Test that FileEditorTool includes working directory info in description."""
-    with tempfile.TemporaryDirectory() as temp_dir:
-        conv_state = _create_test_conv_state(temp_dir)
-        tools = FileEditorTool.create(conv_state)
-        tool = tools[0]
+def test_file_editor_tool_description_is_stable_across_workspaces(tmp_path):
+    """Conversation-specific paths must not leak into the shared tool schema."""
+    workspace_a = tmp_path / "workspace-a"
+    workspace_b = tmp_path / "workspace-b"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
 
-        # Check that the tool description includes working directory information
-        assert f"Your current working directory is: {temp_dir}" in tool.description
-        assert (
-            "When exploring project structure, start with this directory "
-            "instead of the root filesystem."
-        ) in tool.description
+    tool_a = FileEditorTool.create(_create_test_conv_state(str(workspace_a)))[0]
+    tool_b = FileEditorTool.create(_create_test_conv_state(str(workspace_b)))[0]
 
-        # Verify the original description is still there
-        assert (
-            "Custom editing tool for viewing, creating and editing files"
-            in tool.description
-        )
+    assert tool_a.description == tool_b.description
+    assert str(workspace_a) not in tool_a.description
+    assert str(workspace_b) not in tool_b.description
+    assert "Custom editing tool for viewing, creating and editing files" in tool_a.description
 
 
-def test_file_editor_tool_openai_format_includes_working_directory():
-    """Test that OpenAI tool format includes working directory info."""
-    with tempfile.TemporaryDirectory() as temp_dir:
-        conv_state = _create_test_conv_state(temp_dir)
-        tools = FileEditorTool.create(conv_state)
-        tool = tools[0]
+def test_file_editor_tool_openai_format_omits_workspace_path(tmp_path):
+    """The OpenAI tool definition must not contain a conversation's workspace path."""
+    conv_state = _create_test_conv_state(str(tmp_path))
+    tool = FileEditorTool.create(conv_state)[0]
+    function_def = tool.to_openai_tool()["function"]
 
-        # Convert to OpenAI tool format
-        openai_tool = tool.to_openai_tool()
-
-        # Check that the description includes working directory information
-        function_def = openai_tool["function"]
-        assert "description" in function_def
-        description = function_def["description"]
-        assert f"Your current working directory is: {temp_dir}" in description
-        assert (
-            "When exploring project structure, start with this directory "
-            "instead of the root filesystem."
-        ) in description
+    assert function_def["description"] == tool.description
+    assert str(tmp_path) not in function_def["description"]
+    assert "Your current working directory is:" not in function_def["description"]
 
 
 @pytest.mark.parametrize(

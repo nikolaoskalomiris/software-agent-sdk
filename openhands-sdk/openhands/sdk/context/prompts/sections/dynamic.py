@@ -1,7 +1,7 @@
 """Dynamic-tier prompt sections.
 
-These render per-conversation content (datetime, repo context, available skills,
-custom suffix, secrets) into the ``DYNAMIC`` block. All inputs are resolved into the
+These render per-conversation content (workspace, datetime, repo context, available
+skills, custom suffix, secrets) into the ``DYNAMIC`` block. All inputs are resolved into the
 :class:`PromptContext` before assembly (skills gated by model family, secrets merged),
 so the sections stay pure -- no Jinja, no I/O. ``refine()`` is deliberately not applied
 here: rewriting user-provided repo/skill/suffix text is the post-render hack the
@@ -21,6 +21,7 @@ __all__ = [
     "CustomSuffixSection",
     "DateTimeSection",
     "MemoryContextSection",
+    "WorkingDirectorySection",
     "RepoContextSection",
 ]
 
@@ -127,6 +128,25 @@ class CustomSuffixSection:
 
     def render(self, ctx: PromptContext) -> str | None:
         return ctx.custom_suffix
+
+
+class WorkingDirectorySection:
+    """Conversation-specific working-directory guidance."""
+
+    name = "working_directory"
+    cache_tier = CacheTier.DYNAMIC
+
+    def guard(self, ctx: PromptContext) -> bool:
+        return bool(ctx.working_dir)
+
+    def render(self, ctx: PromptContext) -> str | None:
+        return (
+            "<WORKING_DIRECTORY>\\n"
+            f"Your current working directory is: {ctx.working_dir}\\n"
+            "When exploring project structure, start with this directory "
+            "instead of the root filesystem.\\n"
+            "</WORKING_DIRECTORY>"
+        )
 
 
 class CustomSecretsSection:

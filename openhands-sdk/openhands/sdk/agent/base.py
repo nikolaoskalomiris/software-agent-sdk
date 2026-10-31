@@ -432,6 +432,8 @@ class AgentBase(DiscriminatedUnionMixin, ABC):
     def _build_prompt_context(
         self,
         additional_secret_infos: list[dict[str, str | None]] | None = None,
+        *,
+        working_dir: str | None = None,
     ) -> PromptContext:
         """Frozen :class:`PromptContext` snapshot for this agent.
 
@@ -498,7 +500,7 @@ class AgentBase(DiscriminatedUnionMixin, ABC):
             tool_names=tuple(t.name for t in self.tools),
             tool_guidance=self._tool_guidance(),
             platform=Platform.current(),
-            working_dir=None,
+            working_dir=working_dir,
             now=now,
             skill_names=skill_names,
             secret_names=secret_names,
