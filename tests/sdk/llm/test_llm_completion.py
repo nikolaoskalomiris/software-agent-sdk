@@ -1176,3 +1176,70 @@ async def test_streaming_accepts_sync_generator_in_async_path(
     assert received == chunks
     mock_stream_builder.assert_called_once()
     assert response.message.role == "assistant"
+
+
+def test_request_fingerprint_fields_hash_content_without_exposing_it():
+    messages = [
+        {"role": "system", "content": "system-private-sentinel"},
+        {"role": "user", "content": "user-private-sentinel"},
+    ]
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "private_tool",
+                "description": "tool-private-sentinel",
+            },
+        }
+    ]
+
+    fields = llm_module._request_fingerprint_fields(messages, tools)
+
+    assert fields["message_count"] == 2
+    assert fields["message_roles"] == "system,user"
+    assert fields["tool_count"] == 1
+    assert all(
+        len(fields[name]) == 64
+        for name in (
+            "prompt_sha256",
+            "system_prompt_sha256",
+            "first_user_message_sha256",
+            "tool_schema_sha256",
+        )
+    )
+    rendered_fields = repr(fields)
+    assert "system-private-sentinel" not in rendered_fields
+    assert "user-private-sentinel" not in rendered_fields
+    assert "tool-private-sentinel" not in rendered_fields
+
+    changed_user = [
+        messages[0],
+        {"role": "user", "content": "different-user-private-sentinel"},
+    ]
+    changed_user_fields = llm_module._request_fingerprint_fields(changed_user, tools)
+    assert changed_user_fields["prompt_sha256"] != fields["prompt_sha256"]
+    assert (
+        changed_user_fields["first_user_message_sha256"]
+        != fields["first_user_message_sha256"]
+    )
+    assert (
+        changed_user_fields["system_prompt_sha256"]
+        == fields["system_prompt_sha256"]
+    )
+
+    changed_tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "private_tool",
+                "description": "different-tool-private-sentinel",
+            },
+        }
+    ]
+    changed_tools_fields = llm_module._request_fingerprint_fields(
+        messages, changed_tools
+    )
+    assert (
+        changed_tools_fields["tool_schema_sha256"]
+        != fields["tool_schema_sha256"]
+    )

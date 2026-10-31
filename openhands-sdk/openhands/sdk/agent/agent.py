@@ -895,6 +895,20 @@ class Agent(CriticMixin, ResponseDispatchMixin, AgentBase):
         # LLMResponse already contains the converted message and metrics snapshot
         message: Message = llm_response.message
         response_type = classify_response(message)
+        logger.info(
+            "Agent LLM response classified: conversation_id=%s response_id=%s "
+            "response_type=%s tool_calls=%d content_items=%d has_reasoning=%s",
+            call_context.session_id or "unknown",
+            llm_response.id,
+            response_type.value,
+            len(message.tool_calls),
+            len(message.content),
+            bool(
+                message.reasoning_content
+                or message.thinking_blocks
+                or message.responses_reasoning_item
+            ),
+        )
 
         match response_type:
             case LLMResponseType.TOOL_CALLS:
@@ -1109,6 +1123,20 @@ class Agent(CriticMixin, ResponseDispatchMixin, AgentBase):
 
         message: Message = llm_response.message
         response_type = classify_response(message)
+        logger.info(
+            "Agent LLM response classified: conversation_id=%s response_id=%s "
+            "response_type=%s tool_calls=%d content_items=%d has_reasoning=%s",
+            call_context.session_id or "unknown",
+            llm_response.id,
+            response_type.value,
+            len(message.tool_calls),
+            len(message.content),
+            bool(
+                message.reasoning_content
+                or message.thinking_blocks
+                or message.responses_reasoning_item
+            ),
+        )
         if response_type is not LLMResponseType.TOOL_CALLS:
             # Resolve outside the event loop and state lock. A lookup may call
             # this server, and update_secrets() may register another source while

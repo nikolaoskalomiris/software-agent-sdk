@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import os
+import sys
 import threading
+import time
+import uuid
 import warnings
 from collections.abc import (
     AsyncIterable,
@@ -174,6 +178,92 @@ _serialized_is_subscription = ContextVar(
 )
 
 __all__ = ["LLM"]
+
+
+def _stable_json_sha256(value: Any) -> str:
+    """Hash structured request data without exposing its contents in logs."""
+    try:
+        serialized = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+    except (TypeError, ValueError):
+        serialized = repr(value)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _request_fingerprint_fields(
+    messages: Sequence[Mapping[str, Any]],
+    tools: Sequence[object] | None,
+) -> dict[str, Any]:
+    """Return content-free fingerprints and shape metadata for a chat request."""
+    system_message = next(
+        (message for message in messages if message.get("role") == "system"),
+        None,
+    )
+    first_user_message = next(
+        (message for message in messages if message.get("role") == "user"),
+        None,
+    )
+    tool_schemas = list(tools or ())
+    return {
+        "message_count": len(messages),
+        "message_roles": ",".join(
+            str(message.get("role", "unknown")) for message in messages
+        ),
+        "prompt_sha256": _stable_json_sha256(messages),
+        "system_prompt_sha256": (
+            _stable_json_sha256(system_message)
+            if system_message is not None
+            else None
+        ),
+        "first_user_message_sha256": (
+            _stable_json_sha256(first_user_message)
+            if first_user_message is not None
+            else None
+        ),
+        "tool_schema_sha256": _stable_json_sha256(tool_schemas),
+        "tool_count": len(tool_schemas),
+    }
+
+
+def _request_origin() -> str:
+    """Prefer the originating SDK component over retry/instrumentation frames."""
+    frame = sys._getframe(1)
+    fallback = None
+    skipped_prefixes = (
+        "tenacity",
+        "litellm",
+        "asyncio",
+        "contextlib",
+        "functools",
+        "anyio",
+        "lmnr",
+        "opentelemetry",
+        "ddtrace",
+    )
+    while frame is not None:
+        module = frame.f_globals.get("__name__", "unknown")
+        function = getattr(frame.f_code, "co_qualname", frame.f_code.co_name)
+        if module.startswith("openhands.sdk.") and module != __name__:
+            return f"{module}.{function}"
+        if (
+            module != __name__
+            and fallback is None
+            and not module.startswith(skipped_prefixes)
+        ):
+            fallback = f"{module}.{function}"
+        frame = frame.f_back
+    return fallback or "unknown"
+
+
+def _trace_value(value: Any, key: str) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(key)
+    return getattr(value, key, None)
 
 
 # Exceptions we retry on
@@ -2518,6 +2608,101 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
             **kwargs,
         }
 
+    def _start_transport_trace(
+        self,
+        transport: str,
+        messages: list[dict[str, Any]],
+        kwargs: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Log request fingerprints and return timing context; never log payloads."""
+        fields = _request_fingerprint_fields(messages, kwargs.get("tools"))
+        extra_headers = kwargs.get("extra_headers") or {}
+        conversation_id = None
+        if isinstance(extra_headers, Mapping):
+            for name, value in extra_headers.items():
+                if str(name).lower() == "x-litellm-session-id":
+                    conversation_id = value
+                    break
+        if not conversation_id:
+            from openhands.sdk.llm.call_context import resolve_llm_call_context
+
+            conversation_id = resolve_llm_call_context(None).session_id
+
+        trace = {
+            "request_id": uuid.uuid4().hex[:12],
+            "started_at": time.perf_counter(),
+            "origin": _request_origin(),
+            "conversation_id": conversation_id or "unknown",
+            "model": kwargs.get("model", self.model),
+            "transport": transport,
+        }
+        logger.info(
+            "LLM request start request_id=%s transport=%s origin=%s "
+            "conversation_id=%s model=%s provider=%s message_count=%d "
+            "roles=%s prompt_sha256=%s system_prompt_sha256=%s "
+            "first_user_message_sha256=%s tool_schema_sha256=%s tool_count=%d",
+            trace["request_id"],
+            trace["transport"],
+            trace["origin"],
+            trace["conversation_id"],
+            trace["model"],
+            kwargs.get("custom_llm_provider") or "unknown",
+            fields["message_count"],
+            fields["message_roles"],
+            fields["prompt_sha256"],
+            fields["system_prompt_sha256"],
+            fields["first_user_message_sha256"],
+            fields["tool_schema_sha256"],
+            fields["tool_count"],
+        )
+        return trace
+
+    def _finish_transport_trace(
+        self, trace: Mapping[str, Any], response: ModelResponse
+    ) -> None:
+        usage = _trace_value(response, "usage")
+        prompt_details = _trace_value(usage, "prompt_tokens_details")
+        completion_details = _trace_value(usage, "completion_tokens_details")
+        cache_read_tokens = _trace_value(prompt_details, "cached_tokens")
+        if cache_read_tokens is None:
+            cache_read_tokens = _trace_value(usage, "cache_read_tokens")
+        cache_write_tokens = _trace_value(usage, "cache_write_tokens")
+        if cache_write_tokens is None:
+            cache_write_tokens = _trace_value(usage, "cache_creation_input_tokens")
+        logger.info(
+            "LLM request complete request_id=%s transport=%s origin=%s "
+            "conversation_id=%s model=%s response_id=%s elapsed_ms=%.1f "
+            "prompt_tokens=%s completion_tokens=%s cache_read_tokens=%s "
+            "cache_write_tokens=%s reasoning_tokens=%s",
+            trace["request_id"],
+            trace["transport"],
+            trace["origin"],
+            trace["conversation_id"],
+            trace["model"],
+            _trace_value(response, "id"),
+            (time.perf_counter() - trace["started_at"]) * 1000,
+            _trace_value(usage, "prompt_tokens"),
+            _trace_value(usage, "completion_tokens"),
+            cache_read_tokens,
+            cache_write_tokens,
+            _trace_value(completion_details, "reasoning_tokens"),
+        )
+
+    def _fail_transport_trace(
+        self, trace: Mapping[str, Any], error: BaseException
+    ) -> None:
+        logger.warning(
+            "LLM request failed request_id=%s transport=%s origin=%s "
+            "conversation_id=%s model=%s elapsed_ms=%.1f error_type=%s",
+            trace["request_id"],
+            trace["transport"],
+            trace["origin"],
+            trace["conversation_id"],
+            trace["model"],
+            (time.perf_counter() - trace["started_at"]) * 1000,
+            type(error).__name__,
+        )
+
     def _transport_call(
         self,
         *,
@@ -2526,23 +2711,29 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
         on_token: TokenCallbackType | None = None,
         **kwargs,
     ) -> ModelResponse:
-        ret = litellm_completion(
-            **self._prepare_transport_kwargs(
-                messages=messages, enable_streaming=enable_streaming, **kwargs
+        trace = self._start_transport_trace("chat.completions", messages, kwargs)
+        try:
+            ret = litellm_completion(
+                **self._prepare_transport_kwargs(
+                    messages=messages, enable_streaming=enable_streaming, **kwargs
+                )
             )
-        )
-        if enable_streaming and on_token is not None:
-            chunks: list[ModelResponseStream] = []
-            stream = cast(Iterable[ModelResponseStream], ret)
-            for chunk in stream:
-                on_token(chunk)
-                chunks.append(chunk)
-            ret = litellm.stream_chunk_builder(chunks, messages=messages)
+            if enable_streaming and on_token is not None:
+                chunks: list[ModelResponseStream] = []
+                stream = cast(Iterable[ModelResponseStream], ret)
+                for chunk in stream:
+                    on_token(chunk)
+                    chunks.append(chunk)
+                ret = litellm.stream_chunk_builder(chunks, messages=messages)
 
-        assert isinstance(ret, ModelResponse), (
-            f"Expected ModelResponse, got {type(ret)}"
-        )
-        return ret
+            assert isinstance(ret, ModelResponse), (
+                f"Expected ModelResponse, got {type(ret)}"
+            )
+            self._finish_transport_trace(trace, ret)
+            return ret
+        except BaseException as exc:
+            self._fail_transport_trace(trace, exc)
+            raise
 
     async def _atransport_call(
         self,
@@ -2553,38 +2744,46 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
         **kwargs,
     ) -> ModelResponse:
         """Async variant of :meth:`_transport_call`."""
-        auth_values = await self._aget_litellm_auth_values()
-        ret = await litellm_acompletion(
-            **self._prepare_transport_kwargs(
-                messages=messages,
-                enable_streaming=enable_streaming,
-                auth_values=auth_values,
-                **kwargs,
-            )
-        )
-        if enable_streaming and on_token is not None:
-            chunks: list[ModelResponseStream] = []
-            # Some litellm wrappers (lmnr 0.7.47's instrumentor) hand
-            # back a plain sync generator from ``litellm_acompletion``
-            if isinstance(ret, AsyncIterable):
-                stream = cast(AsyncIterable[ModelResponseStream], ret)
-                async for chunk in self._aiter_with_idle_timeout(stream):
-                    await _invoke_token_callback(on_token, chunk)
-                    chunks.append(chunk)
-            else:
-                loop = asyncio.get_running_loop()
-                synced_chunks: list[ModelResponseStream] = await loop.run_in_executor(
-                    None, list, cast(Iterable[ModelResponseStream], ret)
+        trace = self._start_transport_trace("chat.completions", messages, kwargs)
+        try:
+            auth_values = await self._aget_litellm_auth_values()
+            ret = await litellm_acompletion(
+                **self._prepare_transport_kwargs(
+                    messages=messages,
+                    enable_streaming=enable_streaming,
+                    auth_values=auth_values,
+                    **kwargs,
                 )
-                for chunk in synced_chunks:
-                    await _invoke_token_callback(on_token, chunk)
-                    chunks.append(chunk)
-            ret = litellm.stream_chunk_builder(chunks, messages=messages)
+            )
+            if enable_streaming and on_token is not None:
+                chunks: list[ModelResponseStream] = []
+                # Some litellm wrappers (lmnr 0.7.47's instrumentor) hand
+                # back a plain sync generator from `litellm_acompletion`
+                if isinstance(ret, AsyncIterable):
+                    stream = cast(AsyncIterable[ModelResponseStream], ret)
+                    async for chunk in self._aiter_with_idle_timeout(stream):
+                        await _invoke_token_callback(on_token, chunk)
+                        chunks.append(chunk)
+                else:
+                    loop = asyncio.get_running_loop()
+                    synced_chunks: list[ModelResponseStream] = await loop.run_in_executor(
+                        None,
+                        list,
+                        cast(Iterable[ModelResponseStream], ret),
+                    )
+                    for chunk in synced_chunks:
+                        await _invoke_token_callback(on_token, chunk)
+                        chunks.append(chunk)
+                ret = litellm.stream_chunk_builder(chunks, messages=messages)
 
-        assert isinstance(ret, ModelResponse), (
-            f"Expected ModelResponse, got {type(ret)}"
-        )
-        return ret
+            assert isinstance(ret, ModelResponse), (
+                f"Expected ModelResponse, got {type(ret)}"
+            )
+            self._finish_transport_trace(trace, ret)
+            return ret
+        except BaseException as exc:
+            self._fail_transport_trace(trace, exc)
+            raise
 
     # =========================================================================
     # Capabilities, formatting, and info
