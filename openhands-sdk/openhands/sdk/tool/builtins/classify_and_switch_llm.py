@@ -9,10 +9,12 @@ answer, the tool fails loudly (returns an error observation) so the miss is
 visible and retryable, instead of silently routing to a default model.
 """
 
+import ipaddress
 import json
 import re
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, ClassVar, Self
+from urllib.parse import urlsplit
 
 from pydantic import Field
 from rich.text import Text
@@ -37,6 +39,47 @@ if TYPE_CHECKING:
 
 
 logger = get_logger(__name__)
+
+
+def _shares_loopback_backend(first_llm: LLM, second_llm: LLM) -> bool:
+    """Return whether two profiles target the same loopback model server.
+
+    A classifier completion on the agent's single-slot local server replaces
+    the KV cache holding the primed agent prefix. Treat localhost, IPv4
+    loopback, and IPv6 loopback aliases as the same server when scheme and
+    port match, regardless of the API path or model alias.
+    """
+    first_base_url = getattr(first_llm, "base_url", None)
+    second_base_url = getattr(second_llm, "base_url", None)
+    if not first_base_url or not second_base_url:
+        return False
+
+    try:
+        first = urlsplit(str(first_base_url))
+        second = urlsplit(str(second_base_url))
+        first_host = first.hostname
+        second_host = second.hostname
+        first_port = first.port
+        second_port = second.port
+    except ValueError:
+        return False
+
+    def is_loopback(host: str | None) -> bool:
+        if not host:
+            return False
+        if host.casefold() == "localhost":
+            return True
+        try:
+            return ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            return False
+
+    return (
+        first.scheme.casefold() == second.scheme.casefold()
+        and first_port == second_port
+        and is_loopback(first_host)
+        and is_loopback(second_host)
+    )
 
 # Number of trailing conversation messages shown to the classifier.
 _RECENT_MESSAGE_LIMIT = 6
@@ -356,6 +399,25 @@ class ClassifyAndSwitchLLMExecutor(ToolExecutor):
                 loaded.model_copy(update={"usage_id": usage_id})
             )
             conversation.llm_registry.add(classifier_llm)
+
+        # A router classifier that shares the local loopback server with the
+        # agent would evict the primed prefix on a one-slot llama-server.
+        # Keep the current model instead of issuing a competing prefill.
+        if _shares_loopback_backend(classifier_llm, conversation.agent.llm):
+            active_model = conversation.agent.llm.model
+            logger.info(
+                "Skipping model routing because the classifier profile shares "
+                "the agent's loopback model server; preserving the primed "
+                "prompt cache and continuing with the current model."
+            )
+            return ClassifyAndSwitchLLMObservation.from_text(
+                text=(
+                    "Model routing was skipped because its classifier shares "
+                    "the agent's local model server. Continuing with the "
+                    f"current model '{active_model}' to preserve the prompt cache."
+                ),
+                active_model=active_model,
+            )
 
         # 2) Single classifier call over the recent conversation.
         transcript = _recent_messages_text(conversation) or "(no messages yet)"
