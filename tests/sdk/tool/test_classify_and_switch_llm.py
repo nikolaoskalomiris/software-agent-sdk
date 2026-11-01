@@ -18,6 +18,7 @@ from openhands.sdk.tool.builtins import (
 )
 from openhands.sdk.tool.builtins.classify_and_switch_llm import (
     _recent_messages_text,
+    _shares_loopback_backend,
     build_classifier_messages,
     build_classifier_prompt,
     parse_class_index,
@@ -395,6 +396,85 @@ def test_executor_switches_to_matched_class(
     assert obs.model == "fast"
     assert obs.chosen_class == "UI / images"
     assert conversation.agent.llm.model == "fast-model"
+
+
+def test_shares_loopback_backend_across_localhost_aliases() -> None:
+    agent_llm = LLM(
+        model="agent-model",
+        base_url="http://127.0.0.1:8090/v1/",
+        usage_id="agent",
+    )
+    classifier_llm = LLM(
+        model="classifier-model",
+        base_url="http://localhost:8090/chat/completions",
+        usage_id="classifier",
+    )
+
+    assert _shares_loopback_backend(classifier_llm, agent_llm)
+
+
+def test_does_not_share_loopback_backend_when_ports_differ() -> None:
+    agent_llm = LLM(
+        model="agent-model",
+        base_url="http://127.0.0.1:8090/v1",
+        usage_id="agent",
+    )
+    classifier_llm = LLM(
+        model="classifier-model",
+        base_url="http://localhost:8091/v1",
+        usage_id="classifier",
+    )
+
+    assert not _shares_loopback_backend(classifier_llm, agent_llm)
+
+
+def test_executor_skips_classifier_on_agent_loopback_backend(
+    meta_store, monkeypatch
+) -> None:
+    conversation = LocalConversation(
+        agent=Agent(
+            llm=LLM(
+                model="default-model",
+                base_url="http://127.0.0.1:8090/v1",
+                usage_id="default",
+            ),
+            tools=[],
+        ),
+        workspace=Path.cwd(),
+    )
+    _register_tool(conversation, meta_store)
+
+    real_load = conversation._profile_store.load
+    classifier = LLM(
+        model="classifier-model",
+        base_url="http://localhost:8090/v1",
+        usage_id="classifier",
+    )
+
+    def fake_load(name: str, *, cipher=None):
+        if name == "classifier":
+            return classifier
+        return real_load(name, cipher=cipher)
+
+    monkeypatch.setattr(conversation._profile_store, "load", fake_load)
+
+    with pytest.MonkeyPatch.context() as local_patch:
+        local_patch.setattr(
+            LLM,
+            "completion",
+            lambda *_args, **_kwargs: pytest.fail(
+                "The shared local classifier must not issue a competing completion."
+            ),
+        )
+        obs = conversation.execute_tool(
+            "route_task_to_model", ClassifyAndSwitchLLMAction()
+        )
+
+    assert isinstance(obs, ClassifyAndSwitchLLMObservation)
+    assert not obs.is_error
+    assert obs.model is None
+    assert obs.active_model == "default-model"
+    assert conversation.agent.llm.model == "default-model"
 
 
 def test_executor_uses_inline_cloud_llms_without_profile_store(tmp_path) -> None:
