@@ -1,5 +1,6 @@
 import asyncio
 import importlib
+import ipaddress
 import json
 import logging
 import os
@@ -9,6 +10,7 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID, uuid4
 from weakref import WeakValueDictionary
 
@@ -2738,12 +2740,62 @@ class AutoTitleSubscriber(Subscriber):
         asyncio.create_task(_generate_and_save())
 
     @staticmethod
-    def _shares_backend(title_llm: LLM, agent_llm: Any) -> bool:
+    def _normalize_backend_url(base_url: str) -> str:
+        """Normalize endpoint spelling without conflating distinct backends.
+
+        Local OpenAI-compatible endpoints are frequently configured with either
+        localhost or 127.0.0.1. They address the same loopback service; treating
+        them as different would let auto-title evict the agent's KV cache even
+        though both LLM profiles use the same local server.
+        """
+        normalized = base_url.rstrip("/")
+        try:
+            parsed = urlsplit(normalized)
+            hostname = parsed.hostname
+            if not hostname:
+                return normalized.casefold()
+
+            host = hostname.casefold()
+            try:
+                if ipaddress.ip_address(host).is_loopback:
+                    host = "loopback"
+            except ValueError:
+                if host == "localhost":
+                    host = "loopback"
+
+            try:
+                port = parsed.port
+            except ValueError:
+                return normalized.casefold()
+
+            userinfo, separator, _ = parsed.netloc.rpartition("@")
+            user_prefix = f"{userinfo}@" if separator else ""
+            host_literal = f"[{host}]" if ":" in host else host
+            netloc = f"{user_prefix}{host_literal}"
+            if port is not None:
+                netloc += f":{port}"
+
+            return urlunsplit(
+                (
+                    parsed.scheme.casefold(),
+                    netloc.casefold(),
+                    parsed.path.rstrip("/"),
+                    parsed.query,
+                    parsed.fragment,
+                )
+            ).casefold()
+        except ValueError:
+            return normalized.casefold()
+
+    @classmethod
+    def _shares_backend(cls, title_llm: LLM, agent_llm: Any) -> bool:
         """Return whether title and agent LLM configurations share a backend."""
         title_base_url = (title_llm.base_url or "").rstrip("/")
         agent_base_url = (getattr(agent_llm, "base_url", None) or "").rstrip("/")
         if title_base_url and agent_base_url:
-            return title_base_url.casefold() == agent_base_url.casefold()
+            return cls._normalize_backend_url(
+                title_base_url
+            ) == cls._normalize_backend_url(agent_base_url)
         if not title_base_url and not agent_base_url:
             agent_model = getattr(agent_llm, "model", None)
             return (
