@@ -328,6 +328,32 @@ def test_dynamic_sections_render_into_dynamic_block() -> None:
     assert "<CURRENT_DATETIME>" not in blocks.static
 
 
+def test_dynamic_sections_keep_cache_stable_context_before_workspace_context() -> None:
+    """Large shared profile context must precede repository/workspace variance."""
+    ctx = PromptContext(
+        available_skills_prompt="<available_skills>stable</available_skills>",
+        custom_suffix="STABLE_PROFILE_SUFFIX",
+        secret_infos=(("API_KEY", "stable secret name"),),
+        repo_skills=(("agents", "PROJECT_SPECIFIC_GUIDANCE"),),
+        memory_context="PROJECT_SPECIFIC_MEMORY",
+        working_dir="C:/project-specific-workspace",
+        now="2026-11-07T09:00:00+02:00",
+    )
+    dynamic = create_registry().build(ctx).dynamic or ""
+
+    markers = [
+        "<SKILLS>",
+        "STABLE_PROFILE_SUFFIX",
+        "<CUSTOM_SECRETS>",
+        "<REPO_CONTEXT>",
+        "<MEMORY_CONTEXT>",
+        "<WORKING_DIRECTORY>",
+        "<CURRENT_DATETIME>",
+    ]
+    positions = [dynamic.index(marker) for marker in markers]
+    assert positions == sorted(positions)
+
+
 def test_registry_dynamic_matches_legacy_with_available_skills() -> None:
     # Triggered skills land in <available_skills>/<SKILLS> -- the section the matrix
     # (legacy trigger=None skills -> REPO_CONTEXT) does not cover. Mirrors the

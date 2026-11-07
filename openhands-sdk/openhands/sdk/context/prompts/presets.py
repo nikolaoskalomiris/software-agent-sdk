@@ -109,14 +109,17 @@ _PLANNING_STATIC_SECTIONS: Final[tuple[PromptSection, ...]] = (
 )
 
 _DYNAMIC_SECTIONS: Final[tuple[PromptSection, ...]] = (
-    RepoContextSection(),  # guard: gated repo skills present
-    MemoryContextSection(),  # guard: resolved memory present
+    # Cache-stable profile context must precede workspace-specific context. The
+    # Direct llama.cpp backend reuses the longest token prefix across conversation
+    # IDs; putting repository/workspace data first would invalidate the large
+    # shared skills/profile suffix that follows it on the first real chat turn.
     AvailableSkillsSection(),  # guard: available_skills_prompt
     CustomSuffixSection(),  # guard: system_message_suffix
     CustomSecretsSection(),  # guard: secret_infos present
+    RepoContextSection(),  # guard: gated repo skills present
+    MemoryContextSection(),  # guard: resolved memory present
     WorkingDirectorySection(),  # guard: conversation workspace is known
-    # DateTimeSection is intentionally last because it changes continuously;
-    # workspace guidance is stable for the life of its conversation and precedes it.
+    # DateTimeSection is intentionally last because it changes continuously.
     DateTimeSection(),
 )
 

@@ -4,7 +4,7 @@ import contextlib
 import copy
 import json
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path, PurePath
 from typing import Any, Final, TypeGuard, cast
 
@@ -117,6 +117,37 @@ from openhands.sdk.workspace import LocalWorkspace
 
 
 logger = get_logger(__name__)
+
+
+def _merge_project_skills_cache_stable(
+    existing: Iterable[Skill], project: Iterable[Skill]
+) -> list[Skill]:
+    """Merge project skills without moving stable profile skills behind them.
+
+    Project skills remain authoritative on name conflicts, but an override replaces
+    the existing skill in-place and project-only skills are appended afterwards.
+    This preserves the long profile/public skill catalog as a cross-conversation
+    prompt prefix while keeping the documented project-precedence semantics.
+    """
+    existing_list = list(existing)
+    project_list = list(project)
+    project_by_name = {skill.name: skill for skill in project_list}
+
+    merged: list[Skill] = []
+    seen: set[str] = set()
+    for skill in existing_list:
+        resolved = project_by_name.get(skill.name, skill)
+        if resolved.name in seen:
+            continue
+        merged.append(resolved)
+        seen.add(resolved.name)
+
+    for skill in project_list:
+        if skill.name not in seen:
+            merged.append(skill)
+            seen.add(skill.name)
+
+    return merged
 
 ACP_LAST_PROMPT_USER_MESSAGE_ID = "acp_last_prompt_user_message_id"
 ACP_INFLIGHT_PROMPT_USER_MESSAGE_ID = "acp_inflight_prompt_user_message_id"
@@ -1203,9 +1234,12 @@ class LocalConversation(BaseConversation):
                 )
                 project_skills = {}
             if project_skills:
-                # Project skills are authoritative over same-named context skills.
-                merged_skills = merge_skills_by_name(
-                    project_skills.values(), merged_context.skills
+                # Project skills are authoritative over same-named context skills,
+                # but keep the stable profile/public catalog first for prompt-cache
+                # reuse across workspaces. Overrides replace in-place; genuinely new
+                # project skills are appended after the stable catalog.
+                merged_skills = _merge_project_skills_cache_stable(
+                    merged_context.skills, project_skills.values()
                 )
                 # Honor the context deny-list here too: model_copy below bypasses
                 # AgentContext's validator, and a project skill can match a

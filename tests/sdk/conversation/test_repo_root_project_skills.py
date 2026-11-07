@@ -174,6 +174,50 @@ def test_load_project_skills_flag_merges_with_project_precedence(tmp_path: Path)
     conversation.close()
 
 
+def test_project_skill_merge_preserves_stable_catalog_prefix(tmp_path: Path):
+    """Project-only skills append after stable skills while overrides stay authoritative."""
+    agent = _agent(
+        AgentContext(
+            skills=[
+                Skill(name="stable-a", content="A"),
+                Skill(name="override-me", content="OLD"),
+                Skill(name="stable-b", content="B"),
+            ],
+            load_project_skills=True,
+            current_datetime="2026-01-01T00:00:00Z",
+        )
+    )
+    conversation = LocalConversation(
+        agent=agent,
+        workspace=tmp_path,
+        persistence_dir=tmp_path / "conversation",
+        delete_on_close=True,
+    )
+
+    project_override = Skill(name="override-me", content="PROJECT")
+    project_only = Skill(name="project-only", content="PROJECT_ONLY")
+    with patch(
+        "openhands.sdk.conversation.impl.local_conversation.load_available_skills",
+        return_value={
+            "override-me": project_override,
+            "project-only": project_only,
+        },
+    ):
+        conversation.send_message("hi")
+
+    assert conversation.agent.agent_context is not None
+    skills = conversation.agent.agent_context.skills
+    assert [skill.name for skill in skills] == [
+        "stable-a",
+        "override-me",
+        "stable-b",
+        "project-only",
+    ]
+    assert skills[1].content == "PROJECT"
+
+    conversation.close()
+
+
 def test_disabled_skills_drops_project_skill_at_lazy_merge(tmp_path: Path):
     """A project skill whose name is in ``disabled_skills`` is dropped during the
     lazy ``LocalConversation`` merge — the ``model_copy`` path that bypasses the
