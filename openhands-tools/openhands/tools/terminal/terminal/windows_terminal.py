@@ -287,12 +287,17 @@ class WindowsTerminal(TerminalInterface):
             ),
             "$__oh_success = $false",
             "$__oh_last_exit_code = $null",
+            "$global:LASTEXITCODE = $null",
+            (
+                "$__oh_instrumented = $__oh_command + "
+                "[Environment]::NewLine + "
+                "'$__oh_success = $?; "
+                "$__oh_last_exit_code = $LASTEXITCODE'"
+            ),
             (
                 "try { "
-                "$__oh_script = [ScriptBlock]::Create($__oh_command); "
-                ". $__oh_script; "
-                "$__oh_success = $?; "
-                "$__oh_last_exit_code = $LASTEXITCODE "
+                "$__oh_script = [ScriptBlock]::Create($__oh_instrumented); "
+                ". $__oh_script "
                 "} catch { "
                 "Write-Error -ErrorRecord $_; "
                 "$__oh_success = $false; "

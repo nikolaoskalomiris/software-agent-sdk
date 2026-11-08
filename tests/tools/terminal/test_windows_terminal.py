@@ -133,6 +133,7 @@ def test_powershell_variable_assignment_persists(windows_session) -> None:
 
     assert observed.exit_code == 0
     assert observed.text.strip() == "kept"
+    assert "$__oh_command" not in observed.text
 
 
 @pytest.mark.parametrize(
@@ -208,6 +209,7 @@ def test_failed_powershell_command_reports_failure(windows_session) -> None:
     obs = windows_session.execute(TerminalAction(command="Get-Item __missing_path__"))
 
     assert obs.exit_code == 1
+    assert "$__oh_command" not in obs.text
 
 
 def test_native_exit_code_does_not_leak_to_next_command(windows_session) -> None:

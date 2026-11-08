@@ -97,7 +97,13 @@ def _remove_powershell_echo(command_output: str, command: str) -> str:
     command_output = command_output.lstrip()
     command = command.lstrip()
     first_line = command_output.splitlines()[0] if command_output else ""
-    if command and command in first_line:
+    generated_wrapper = (
+        first_line.startswith("$__oh_command = ")
+        and "[ScriptBlock]::Create($__oh_instrumented)" in first_line
+        and "###PS1JSON###" in first_line
+        and "###PS1END###" in first_line
+    )
+    if (command and command in first_line) or generated_wrapper:
         _, separator, rest = command_output.partition("\n")
         command_output = rest if separator else ""
     return re.sub(r"(?:\r?\n)?PS [^\r\n]*>\s*$", "", command_output).lstrip()
