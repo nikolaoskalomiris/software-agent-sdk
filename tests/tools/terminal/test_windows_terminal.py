@@ -102,6 +102,40 @@ def test_basic_command_execution(windows_session) -> None:
     assert "Hello from Windows terminal" in obs.text
 
 
+
+def test_parse_error_completes_and_next_command_recovers(windows_session) -> None:
+    obs = windows_session.execute(
+        TerminalAction(
+            command='Write-Output "left" && Write-Output "right"',
+            timeout=5,
+        )
+    )
+
+    assert obs.exit_code == 1
+    assert windows_session.prev_status == TerminalCommandStatus.COMPLETED
+
+    recovered = windows_session.execute(
+        TerminalAction(command='Write-Output "RECOVERED"', timeout=5)
+    )
+
+    assert recovered.exit_code == 0
+    assert "RECOVERED" in recovered.text
+
+
+def test_powershell_variable_assignment_persists(windows_session) -> None:
+    assigned = windows_session.execute(
+        TerminalAction(command='$OpenHandsPersistenceProbe = "kept"')
+    )
+    assert assigned.exit_code == 0
+
+    observed = windows_session.execute(
+        TerminalAction(command="Write-Output $OpenHandsPersistenceProbe")
+    )
+
+    assert observed.exit_code == 0
+    assert observed.text.strip() == "kept"
+
+
 @pytest.mark.parametrize(
     ("command", "expected"),
     [

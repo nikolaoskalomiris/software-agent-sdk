@@ -1,5 +1,6 @@
 """PowerShell-backed terminal backend for Windows."""
 
+import base64
 import codecs
 import json
 import os
@@ -252,26 +253,67 @@ class WindowsTerminal(TerminalInterface):
         stripped_text = text.rstrip()
         if stripped_text:
             self._command_running_event.set()
-            command = f"{stripped_text}; {self._metadata_suffix()}"
+            command = self._wrap_command(stripped_text)
         else:
             command = text
 
-        if enter:
-            if "\n" in stripped_text or "\r" in stripped_text:
-                # PowerShell holds a multiline statement at the ">>" continuation
-                # prompt until a blank line is received, so multiline input needs a
-                # trailing empty line to execute.
-                command += "\n\n"
-            elif not command.endswith("\n"):
-                command += "\n"
+        if enter and not command.endswith("\n"):
+            command += "\n"
         self._write_to_stdin(command)
 
-    def _metadata_suffix(self) -> str:
+    def _wrap_command(self, text: str) -> str:
+        """Execute model-supplied PowerShell text without trusting its parseability.
+
+        PowerShell parses a submitted statement before executing any part of it. If
+        the model command and completion metadata share one statement, a syntax error
+        in the model command prevents the metadata from running and leaves the
+        controller believing the command is still active. Encode the model command as
+        data, parse it at runtime, dot-source it into the persistent session, and emit
+        completion metadata from the finally block so parser/runtime errors cannot
+        suppress the completion marker.
+        """
+        encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
+        metadata = self._metadata_suffix(
+            success_expr="$__oh_success",
+            last_exit_code_expr="$__oh_last_exit_code",
+        )
+        commands = [
+            (
+                "$__oh_command = "
+                "[System.Text.Encoding]::UTF8.GetString("
+                "[System.Convert]::FromBase64String('"
+                + encoded
+                + "'))"
+            ),
+            "$__oh_success = $false",
+            "$__oh_last_exit_code = $null",
+            (
+                "try { "
+                "$__oh_script = [ScriptBlock]::Create($__oh_command); "
+                ". $__oh_script; "
+                "$__oh_success = $?; "
+                "$__oh_last_exit_code = $LASTEXITCODE "
+                "} catch { "
+                "Write-Error -ErrorRecord $_; "
+                "$__oh_success = $false; "
+                "$__oh_last_exit_code = $null "
+                "} finally { "
+                + metadata
+                + " }"
+            ),
+        ]
+        return "; ".join(commands)
+
+    def _metadata_suffix(
+        self,
+        success_expr: str = "$?",
+        last_exit_code_expr: str = "$LASTEXITCODE",
+    ) -> str:
         ps1_begin = self._escape_single_quoted(CMD_OUTPUT_PS1_BEGIN.strip())
         ps1_end = self._escape_single_quoted(CMD_OUTPUT_PS1_END.strip())
         commands = [
-            "$oh1 = $?",
-            "$oh2 = $LASTEXITCODE",
+            f"$oh1 = {success_expr}",
+            f"$oh2 = {last_exit_code_expr}",
             f"Write-Host '{ps1_begin}'",
             (
                 "$exit_code = if ($null -ne $oh2) { "
