@@ -191,6 +191,8 @@ def test_multiple_statements_rejected_like_unix(windows_session) -> None:
 
     assert obs.is_error
     assert "Cannot execute multiple commands at once" in obs.text
+    assert "command via ;" in obs.text
+    assert "&&" not in obs.text
 
 
 def test_working_directory_updates_and_persists(windows_session, temp_dir: str) -> None:

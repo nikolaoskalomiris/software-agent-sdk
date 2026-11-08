@@ -538,11 +538,16 @@ class TerminalSession(TerminalSessionBase):
             commands_list = "\n".join(
                 f"({i + 1}) {cmd}" for i, cmd in enumerate(splited_commands)
             )
+            chain_hint = (
+                ";"
+                if self.terminal.is_powershell()
+                else "&& or ;"
+            )
             return TerminalObservation.from_text(
                 text=(
                     "Cannot execute multiple commands at once.\n"
                     "Please run each command separately OR chain them into a single "
-                    f"command via && or ;\nProvided commands:\n{commands_list}"
+                    f"command via {chain_hint}\nProvided commands:\n{commands_list}"
                 ),
                 command=command,
                 is_error=True,
