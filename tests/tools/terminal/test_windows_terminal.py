@@ -102,7 +102,6 @@ def test_basic_command_execution(windows_session) -> None:
     assert "Hello from Windows terminal" in obs.text
 
 
-
 def test_parse_error_completes_and_next_command_recovers(windows_session) -> None:
     obs = windows_session.execute(
         TerminalAction(
@@ -248,7 +247,6 @@ def test_terminal_tool_uses_windows_description(temp_dir: str) -> None:
 
     tools = TerminalTool.create(conv_state, terminal_type="powershell")
     assert "PowerShell session" in tools[0].description
-
 
 
 def test_close_terminates_process_when_reader_blocked(temp_dir: str) -> None:

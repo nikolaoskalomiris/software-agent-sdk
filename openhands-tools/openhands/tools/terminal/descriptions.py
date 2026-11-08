@@ -54,6 +54,8 @@ WINDOWS_TOOL_DESCRIPTION = "\n".join(
         "### Command Execution",
         "* One command at a time: You can only execute one PowerShell command at a",
         "  time. If you need multiple commands, prefer `;` to chain them.",
+        "* Windows PowerShell compatibility: Do NOT use `&&` for command chaining.",
+        "  Use `;` or explicit PowerShell conditional logic instead.",
         "* Persistent session: Environment variables, modules, and working",
         "  directory changes persist across commands.",
         "* Soft timeout: Commands pause for confirmation after 10 seconds without",
