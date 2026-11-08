@@ -152,3 +152,43 @@ def test_action_event_with_reasoning_content():
     # Test that reasoning content is included in the LLM message
     llm_message = action_event.to_llm_message()
     assert llm_message.reasoning_content == "Let me think about this step by step..."
+
+def test_alias_capability_override_controls_reasoning_passback():
+    """A stable proxy alias can opt into reasoning passback without renaming."""
+    from openhands.sdk import LLM
+    from openhands.sdk.llm.message import Message, MessageToolCall, TextContent
+
+    message = Message(
+        role="assistant",
+        content=[TextContent(text="")],
+        reasoning_content="synthetic-reasoning-content",
+        tool_calls=[
+            MessageToolCall(
+                id="call-probe",
+                name="probe_echo",
+                arguments='{"text":"alpha"}',
+                origin="completion",
+            )
+        ],
+    )
+
+    default_llm = LLM(
+        model="openai/openhands-local",
+        api_key="local-test-key",
+        base_url="http://127.0.0.1:8090/v1",
+    )
+    enabled_llm = LLM(
+        model="openai/openhands-local",
+        api_key="local-test-key",
+        base_url="http://127.0.0.1:8090/v1",
+        capability_overrides={"send_reasoning_content": True},
+    )
+
+    default_outbound = default_llm.format_messages_for_llm([message])[0]
+    enabled_outbound = enabled_llm.format_messages_for_llm([message])[0]
+
+    assert "reasoning_content" not in default_outbound
+    assert enabled_outbound["reasoning_content"] == "synthetic-reasoning-content"
+    assert len(enabled_outbound["tool_calls"]) == 1
+    assert enabled_outbound["tool_calls"][0]["function"]["name"] == "probe_echo"
+

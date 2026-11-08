@@ -395,6 +395,24 @@ def test_capability_overrides_take_precedence_over_metadata():
     assert features.supports_vision is True
 
 
+def test_send_reasoning_content_capability_override():
+    """Explicit overrides support proxied aliases in both directions."""
+    assert (
+        get_features(
+            "openai/openhands-local",
+            overrides={"send_reasoning_content": True},
+        ).send_reasoning_content
+        is True
+    )
+    assert (
+        get_features(
+            "kimi-k2-thinking",
+            overrides={"send_reasoning_content": False},
+        ).send_reasoning_content
+        is False
+    )
+
+
 def test_responses_api_is_discovered_from_model_metadata():
     features = get_features(
         "proxy/future-model",
