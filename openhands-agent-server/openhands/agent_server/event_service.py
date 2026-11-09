@@ -22,6 +22,7 @@ from openhands.agent_server.conversation_lease import (
 from openhands.agent_server.managed_llm_key import register_managed_llm_key_refresh
 from openhands.agent_server.models import (
     ConfirmationResponseRequest,
+    EffectivePayloadAuditResponse,
     EventPage,
     EventSortOrder,
     PromptCachePrimeProbeMetrics,
@@ -530,6 +531,96 @@ class EventService:
                 self.renew_lease()
         except asyncio.CancelledError:
             raise
+
+    async def inspect_effective_payload(
+        self, probe_text: str
+    ) -> EffectivePayloadAuditResponse:
+        """Build the real native-agent chat payload without calling the model."""
+        if not self._conversation or self._closing:
+            raise ValueError("inactive_service")
+
+        async with self._run_lock:
+            if self._closing:
+                raise ValueError("inactive_service")
+            if (self._run_task is not None and not self._run_task.done()) or (
+                self._goal_loop_task is not None and not self._goal_loop_task.done()
+            ):
+                raise ValueError("conversation_already_running")
+            if (
+                await self._get_execution_status()
+                == ConversationExecutionStatus.RUNNING
+            ):
+                raise ValueError("conversation_already_running")
+
+            conversation = self._conversation
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                self._run_executor,
+                self._inspect_effective_payload_sync,
+                conversation,
+                probe_text,
+            )
+
+    @staticmethod
+    def _inspect_effective_payload_sync(
+        conversation: LocalConversation,
+        probe_text: str,
+    ) -> EffectivePayloadAuditResponse:
+        """Prepare exactly what chat-completions would receive, without transport."""
+        if not isinstance(conversation.agent, Agent):
+            raise ValueError("effective_payload_audit_requires_native_agent")
+
+        conversation._ensure_agent_ready()
+        agent = conversation.agent
+
+        with conversation._state:
+            if conversation._state.last_user_message_id is not None:
+                raise ValueError("effective_payload_audit_requires_empty_conversation")
+            if (
+                conversation._state.execution_status
+                != ConversationExecutionStatus.IDLE
+            ):
+                raise ValueError("effective_payload_audit_requires_idle_conversation")
+            security_analyzer_enabled = (
+                conversation._state.security_analyzer is not None
+            )
+
+        llm = agent.llm
+        if llm.uses_responses_api():
+            raise ValueError("effective_payload_audit_requires_chat_completions")
+
+        messages = agent._prepare_llm_messages(
+            conversation,
+            additional_messages=[
+                Message(role="user", content=[TextContent(text=probe_text)])
+            ],
+        )
+        if not isinstance(messages, list):
+            raise ValueError("effective_payload_audit_requires_uncondensed_context")
+
+        call_context = conversation.get_llm_call_context()
+        (
+            formatted_messages,
+            _cc_tools,
+            use_mock_tools,
+            call_kwargs,
+            _telemetry_ctx,
+        ) = llm._prepare_completion_params(
+            messages,
+            list(agent.tools_map.values()),
+            security_analyzer_enabled,
+            {},
+            call_context=call_context,
+        )
+
+        actual_tools = call_kwargs.get("tools") or []
+        return EffectivePayloadAuditResponse(
+            model=llm.model,
+            messages=formatted_messages,
+            tools=list(actual_tools),
+            use_mock_tools=use_mock_tools,
+            security_risk_prediction=security_analyzer_enabled,
+        )
 
     async def prime_prompt_cache(
         self, first_probe: str, verification_probe: str
