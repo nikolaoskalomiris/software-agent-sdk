@@ -574,11 +574,14 @@ class EventService:
         agent = conversation.agent
 
         with conversation._state:
-            if (
-                conversation._state.execution_status
-                != ConversationExecutionStatus.IDLE
+            execution_status = conversation._state.execution_status
+            if not (
+                execution_status == ConversationExecutionStatus.IDLE
+                or execution_status.is_terminal()
             ):
-                raise ValueError("effective_payload_audit_requires_idle_conversation")
+                raise ValueError(
+                    "effective_payload_audit_requires_quiescent_conversation"
+                )
             security_analyzer_enabled = (
                 conversation._state.security_analyzer is not None
             )
