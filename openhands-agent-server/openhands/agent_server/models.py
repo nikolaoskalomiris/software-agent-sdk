@@ -612,6 +612,22 @@ class StartGoalRequest(BaseModel):
     )
 
 
+class EffectivePayloadAuditRequest(BaseModel):
+    """Synthetic user text used only to build, never send, an effective LLM payload."""
+
+    probe_text: str = Field(min_length=1, max_length=512)
+
+
+class EffectivePayloadAuditResponse(BaseModel):
+    """Exact prepared chat messages and tool schemas immediately before transport."""
+
+    model: str
+    messages: list[dict[str, Any]]
+    tools: list[dict[str, Any]]
+    use_mock_tools: bool
+    security_risk_prediction: bool
+
+
 class PromptCachePrimeRequest(BaseModel):
     """Two distinct synthetic user messages used to verify prefix reuse."""
 
