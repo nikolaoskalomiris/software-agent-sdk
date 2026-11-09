@@ -174,7 +174,7 @@ Before using this tool:
 When making edits:
    - Ensure the edit results in idiomatic, correct code
    - Do not leave the code in a broken state
-   - Always use absolute file paths (starting with /)
+   - Always use absolute file paths valid for the current platform (for example, `C:\\path\\to\\file` on Windows or `/path/to/file` on POSIX)
 
 CRITICAL REQUIREMENTS FOR USING THIS TOOL:
 
