@@ -446,6 +446,49 @@ def test_save_overwrites_existing(client, store):
     assert store.load("existing").llm_profile_ref == "new"
 
 
+def test_legacy_profile_editor_omission_preserves_system_prompt(client, store):
+    """An older client that omits the additive field must not erase the brain."""
+    store.save(
+        OpenHandsAgentProfile(
+            name="existing",
+            llm_profile_ref="old",
+            system_prompt="PROJECT BRAIN",
+        )
+    )
+
+    response = client.post(
+        "/api/agent-profiles/existing",
+        json={"llm_profile_ref": "new", "tools": [{"name": "terminal"}]},
+    )
+
+    assert response.status_code == 201
+    loaded = store.load("existing")
+    assert isinstance(loaded, OpenHandsAgentProfile)
+    assert loaded.llm_profile_ref == "new"
+    assert loaded.system_prompt == "PROJECT BRAIN"
+
+
+def test_explicit_null_clears_system_prompt(client, store):
+    """Explicit null is an intentional clear, unlike an omitted legacy field."""
+    store.save(
+        OpenHandsAgentProfile(
+            name="existing",
+            llm_profile_ref="old",
+            system_prompt="PROJECT BRAIN",
+        )
+    )
+
+    response = client.post(
+        "/api/agent-profiles/existing",
+        json={"llm_profile_ref": "new", "system_prompt": None},
+    )
+
+    assert response.status_code == 201
+    loaded = store.load("existing")
+    assert isinstance(loaded, OpenHandsAgentProfile)
+    assert loaded.system_prompt is None
+
+
 def test_overwrite_preserves_id_and_pointer(client, store):
     """Overwriting a profile keeps its id stable (and bumps revision).
 
