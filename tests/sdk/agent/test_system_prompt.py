@@ -59,7 +59,6 @@ def test_static_system_message_falls_back_to_template_when_none() -> None:
 @pytest.mark.parametrize("enabled", [False, True])
 def test_generate_response_forwards_security_risk_prediction_gate(enabled: bool) -> None:
     agent = Agent(llm=_make_llm(), tools=[])
-    agent._tools = {}
     with patch.object(LLM, "generate") as generate:
         agent._generate_response(
             [],
