@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import ClassVar
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 
 import pytest
 
@@ -59,7 +59,10 @@ def test_static_system_message_falls_back_to_template_when_none() -> None:
 @pytest.mark.parametrize("enabled", [False, True])
 def test_generate_response_forwards_security_risk_prediction_gate(enabled: bool) -> None:
     agent = Agent(llm=_make_llm(), tools=[])
-    with patch.object(LLM, "generate") as generate:
+    with (
+        patch.object(AgentBase, "tools_map", new_callable=PropertyMock, return_value={}),
+        patch.object(LLM, "generate") as generate,
+    ):
         agent._generate_response(
             [],
             call_context=None,  # type: ignore[arg-type]
