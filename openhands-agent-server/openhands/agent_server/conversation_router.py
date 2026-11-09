@@ -271,7 +271,7 @@ async def reprovision_local_conversation_runtime(
     "/{conversation_id}/effective-payload/audit",
     responses={
         404: {"description": "Conversation not found"},
-        409: {"description": "Conversation is already running or not idle"},
+        409: {"description": "Conversation is active and not safe to inspect"},
         422: {"description": "Effective payload audit is unsupported"},
     },
 )
@@ -290,7 +290,7 @@ async def audit_conversation_effective_payload(
     except ValueError as exc:
         if str(exc) in {
             "conversation_already_running",
-            "effective_payload_audit_requires_idle_conversation",
+            "effective_payload_audit_requires_quiescent_conversation",
         }:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail=str(exc)
