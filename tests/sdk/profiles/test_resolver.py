@@ -72,6 +72,7 @@ def test_openhands_resolves_to_settings_with_injected_llm(
         name="oh",
         llm_profile_ref="default",
         agent="CodeActAgent",
+        system_prompt="PROJECT BRAIN",
         system_message_suffix="be terse",
         tool_concurrency_limit=3,
         mcp_server_refs=["fetch"],
@@ -86,6 +87,7 @@ def test_openhands_resolves_to_settings_with_injected_llm(
 
     assert isinstance(settings, OpenHandsAgentSettings)
     assert settings.agent == "CodeActAgent"
+    assert settings.system_prompt == "PROJECT BRAIN"
     assert settings.tool_concurrency_limit == 3
     assert settings.agent_context is not None
     assert settings.agent_context.system_message_suffix == "be terse"
@@ -97,6 +99,9 @@ def test_openhands_resolves_to_settings_with_injected_llm(
     assert list(settings.mcp_config.keys()) == ["fetch"]
     agent = settings.create_agent()
     assert isinstance(agent, Agent)
+    assert agent.system_prompt == "PROJECT BRAIN"
+    assert agent.static_system_message.startswith("PROJECT BRAIN")
+    assert "<SECURITY>" not in agent.static_system_message
     # Delegation is a tool the profile selects, not a switch on the side.
     assert [t.name for t in agent.tools] == ["terminal", "file_editor", "task_tracker"]
     assert "SwitchLLMTool" in agent.include_default_tools

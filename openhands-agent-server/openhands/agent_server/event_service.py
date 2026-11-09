@@ -592,6 +592,9 @@ class EventService:
                 != ConversationExecutionStatus.IDLE
             ):
                 raise ValueError("prompt_cache_priming_requires_idle_conversation")
+            security_analyzer_enabled = (
+                conversation._state.security_analyzer is not None
+            )
 
         call_context = conversation.get_llm_call_context()
         llm = agent.llm
@@ -621,6 +624,7 @@ class EventService:
             response = agent._generate_response(
                 messages,
                 call_context=call_context,
+                security_analyzer_enabled=security_analyzer_enabled,
                 on_token=None,
                 **token_limit,
             )

@@ -70,8 +70,13 @@ export interface OpenHandsAgentProfile extends AgentProfileBase {
    * catalog). `[]` = all discovered skills; an unknown name is a no-op.
    */
   disabled_skills?: string[];
-  /** Replaces the built-in persona, keeping capability guidance; needs `profile_persona_v1`. */
+  /** Replaces the built-in persona while retaining OpenHands capability/policy sections. */
   persona?: string | null;
+  /**
+   * Complete static system prompt. When set, replaces OpenHands' built-in static
+   * prompt while keeping loaded-tool prompt guidance and dynamic project/runtime context.
+   */
+  system_prompt?: string | null;
   system_message_suffix: string | null;
   condenser: unknown;
   verification: ProfileVerificationSettings;

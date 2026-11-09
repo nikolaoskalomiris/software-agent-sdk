@@ -66,6 +66,7 @@ def build_seed_profile(
         tools=agent_settings.tools,
         disabled_skills=list(context.disabled_skills),
         persona=agent_settings.persona,
+        system_prompt=agent_settings.system_prompt,
         system_message_suffix=context.system_message_suffix,
         condenser=agent_settings.condenser,
         verification=build_profile_verification(agent_settings.verification),

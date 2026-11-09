@@ -215,6 +215,19 @@ class OpenHandsAgentProfile(AgentProfileBase):
             "included. None keeps the built-in persona."
         ),
     )
+    system_prompt: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=131072,
+        description=(
+            "Complete static system prompt for the agent. When set, this replaces "
+            "OpenHands' built-in static prompt while preserving loaded-tool prompt "
+            "guidance and dynamic AgentContext (project skills, working directory, "
+            "secrets, runtime context, etc.). Persona is ignored by the underlying "
+            "Agent when this field is set. None keeps the normal persona/default "
+            "prompt composition."
+        ),
+    )
     system_message_suffix: str | None = Field(
         default=None,
         description="Optional suffix appended to the system prompt.",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import ClassVar
+from unittest.mock import patch
 
 import pytest
 
@@ -53,6 +54,20 @@ def test_static_system_message_falls_back_to_template_when_none() -> None:
     # The default template renders a non-empty string
     assert len(agent.static_system_message) > 0
     assert agent.static_system_message != ""
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_generate_response_forwards_security_risk_prediction_gate(enabled: bool) -> None:
+    agent = Agent(llm=_make_llm(), tools=[])
+    agent._tools = {}
+    with patch.object(LLM, "generate") as generate:
+        agent._generate_response(
+            [],
+            call_context=None,  # type: ignore[arg-type]
+            security_analyzer_enabled=enabled,
+        )
+
+    assert generate.call_args.kwargs["add_security_risk_prediction"] is enabled
 
 
 # --- mutual-exclusivity validation ---

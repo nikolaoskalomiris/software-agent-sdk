@@ -358,6 +358,22 @@ class TestProfileLaunch:
         assert launched.agent.static_system_message.startswith(persona)
         assert "<SECURITY>" in launched.agent.static_system_message
 
+    @pytest.mark.asyncio
+    async def test_the_profile_system_prompt_reaches_the_launched_agent(self, tmp_path):
+        system_prompt = "PROJECT BRAIN"
+        profile = _make_openhands_profile(system_prompt=system_prompt)
+
+        _, launched = await _start(
+            tmp_path, _profile_request(tmp_path, profile), stores=fakes.stores(profile)
+        )
+
+        assert isinstance(launched.agent, Agent)
+        assert launched.agent.system_prompt == system_prompt
+        assert launched.agent.static_system_message.startswith(system_prompt)
+        assert "<SOUL>" not in launched.agent.static_system_message
+        assert "<ROLE>" not in launched.agent.static_system_message
+        assert "<SECURITY>" not in launched.agent.static_system_message
+
     @pytest.mark.parametrize(
         ("browser", "expected"),
         [

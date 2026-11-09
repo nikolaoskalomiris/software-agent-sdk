@@ -1598,6 +1598,16 @@ class OpenHandsAgentSettings(AgentSettingsBase):
             "included. None keeps the built-in persona."
         ),
     )
+    system_prompt: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=131072,
+        description=(
+            "Complete static system prompt for the agent. When set, this replaces "
+            "OpenHands' built-in static prompt while preserving loaded-tool prompt "
+            "guidance and dynamic AgentContext."
+        ),
+    )
     agent_context: AgentContext = Field(
         default_factory=AgentContext,
         description="Context for the agent (skills, secrets, message suffixes).",
@@ -1700,6 +1710,7 @@ class OpenHandsAgentSettings(AgentSettingsBase):
             include_default_tools=include_default_tools,
             agent_context=self.agent_context,
             persona=self.persona,
+            system_prompt=self.system_prompt,
             condenser=condenser,
             critic=self.build_critic(),
             tool_concurrency_limit=self.tool_concurrency_limit,

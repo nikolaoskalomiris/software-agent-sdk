@@ -300,6 +300,7 @@ def _build_openhands_settings(
             else launch_tool_specs(profile.tools, browser_available=browser_available),
         ),
         "persona": profile.persona,
+        "system_prompt": profile.system_prompt,
         "agent_context": AgentContext(
             skills=filtered_skills,
             system_message_suffix=profile.system_message_suffix,

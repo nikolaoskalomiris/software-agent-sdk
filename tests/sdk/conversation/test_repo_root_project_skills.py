@@ -84,6 +84,44 @@ def test_system_prompt_includes_repo_root_agents_md_when_workdir_is_subdir(
     conversation.close()
 
 
+def test_custom_system_prompt_keeps_repo_agents_md_as_project_context(tmp_path: Path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "AGENTS.md").write_text(
+        "# Project Guidelines\n\nSENTINEL_PROJECT_BRAIN_321\n"
+    )
+
+    agent = Agent(
+        llm=TestLLM.from_messages(
+            [Message(role="assistant", content=[TextContent(text="ok")])],
+            model="test-model",
+        ),
+        tools=[],
+        include_default_tools=[],
+        system_prompt="PROJECT BRAIN",
+        agent_context=AgentContext(
+            load_project_skills=True,
+            current_datetime="2026-01-01T00:00:00Z",
+        ),
+    )
+    conversation = LocalConversation(
+        agent=agent,
+        workspace=tmp_path,
+        persistence_dir=tmp_path / "conversation",
+        delete_on_close=True,
+    )
+    conversation.send_message("hi")
+
+    system_prompt_event = next(
+        e for e in conversation.state.events if isinstance(e, SystemPromptEvent)
+    )
+    assert system_prompt_event.system_prompt.text == "PROJECT BRAIN"
+    assert system_prompt_event.dynamic_context is not None
+    assert "SENTINEL_PROJECT_BRAIN_321" in system_prompt_event.dynamic_context.text
+    assert "project-scoped instructions" in system_prompt_event.dynamic_context.text
+
+    conversation.close()
+
+
 def test_load_project_skills_flag_injects_skills_in_standalone_sdk(tmp_path: Path):
     """``AgentContext(load_project_skills=True)`` works without agent-server.
 

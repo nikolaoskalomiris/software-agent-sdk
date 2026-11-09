@@ -711,6 +711,7 @@ class Agent(CriticMixin, ResponseDispatchMixin, AgentBase):
         messages: list[Message],
         *,
         call_context: LLMCallContext,
+        security_analyzer_enabled: bool,
         on_token: ConversationTokenCallbackType | None = None,
         **kwargs,
     ) -> LLMResponse:
@@ -719,7 +720,7 @@ class Agent(CriticMixin, ResponseDispatchMixin, AgentBase):
             messages=messages,
             tools=list(self.tools_map.values()),
             store=False,
-            add_security_risk_prediction=True,
+            add_security_risk_prediction=security_analyzer_enabled,
             on_token=on_token,
             call_context=call_context,
             **kwargs,
@@ -817,6 +818,7 @@ class Agent(CriticMixin, ResponseDispatchMixin, AgentBase):
             llm_response = self._generate_response(
                 _messages,
                 call_context=call_context,
+                security_analyzer_enabled=state.security_analyzer is not None,
                 on_token=stream.token_callback,
             )
         except FunctionCallValidationError as e:
@@ -1041,7 +1043,7 @@ class Agent(CriticMixin, ResponseDispatchMixin, AgentBase):
                     messages=_messages,
                     tools=list(self.tools_map.values()),
                     store=False,
-                    add_security_risk_prediction=True,
+                    add_security_risk_prediction=state.security_analyzer is not None,
                     on_token=stream.token_callback,
                     call_context=call_context,
                 )
