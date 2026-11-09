@@ -574,8 +574,6 @@ class EventService:
         agent = conversation.agent
 
         with conversation._state:
-            if conversation._state.last_user_message_id is not None:
-                raise ValueError("effective_payload_audit_requires_empty_conversation")
             if (
                 conversation._state.execution_status
                 != ConversationExecutionStatus.IDLE
