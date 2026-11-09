@@ -419,15 +419,20 @@ def save_profile_preserving_identity(
     profile: OpenHandsAgentProfile | ACPAgentProfile,
     *,
     max_profiles: int | None = None,
+    preserve_system_prompt: bool = False,
 ) -> OpenHandsAgentProfile | ACPAgentProfile:
     """Save ``profile`` with the server-managed id/revision policy.
 
     * **overwrite** a namesake → keep its stable ``id``, ``revision = prev + 1``;
     * **create** → mint a fresh ``uuid4`` (ignoring any client-supplied id).
+    * when ``preserve_system_prompt`` is true, an OpenHands-over-OpenHands
+      overwrite keeps the stored full system prompt. This supports older clients
+      that do not know the additive field; callers must leave the flag false when
+      the request explicitly supplied ``system_prompt`` (including null).
 
-    Runs under :meth:`~AgentProfileStoreProtocol.lock` so concurrent creates of
-    the same name can't both mint an id and clobber each other. Returns the saved
-    profile.
+    Runs under :meth:`~AgentProfileStoreProtocol.lock` so identity resolution,
+    optional prompt preservation, and the write are one atomic store transaction.
+    Returns the saved profile.
 
     Raises:
         ProfileLimitExceeded: If ``max_profiles`` would be exceeded.
@@ -438,6 +443,12 @@ def save_profile_preserving_identity(
     with store.lock():
         existing_id, existing_rev = _existing_identity(store, profile.name)
         if existing_id is not None:
+            if preserve_system_prompt and isinstance(profile, OpenHandsAgentProfile):
+                existing = store.load(profile.name)
+                if isinstance(existing, OpenHandsAgentProfile):
+                    profile = profile.model_copy(
+                        update={"system_prompt": existing.system_prompt}
+                    )
             profile = profile.model_copy(
                 update={"id": existing_id, "revision": (existing_rev or 0) + 1}
             )
