@@ -204,6 +204,16 @@ def test_file_editor_tool_description_is_stable_across_workspaces(tmp_path):
     )
 
 
+def test_file_editor_tool_description_uses_platform_neutral_absolute_paths(tmp_path):
+    """Tool guidance must not imply POSIX-only absolute paths."""
+    tool = FileEditorTool.create(_create_test_conv_state(str(tmp_path)))[0]
+
+    assert "absolute file paths valid for the current platform" in tool.description
+    assert "C:\\path\\to\\file" in tool.description
+    assert "/path/to/file" in tool.description
+    assert "absolute file paths (starting with /)" not in tool.description
+
+
 def test_file_editor_tool_openai_format_omits_workspace_path(tmp_path):
     """The OpenAI tool definition must not contain a conversation's workspace path."""
     conv_state = _create_test_conv_state(str(tmp_path))
