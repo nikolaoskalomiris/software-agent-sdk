@@ -4103,6 +4103,96 @@ class TestEmitEventFromThreadFailures:
         assert scheduled[0] == finished.add_done_callback
 
 
+def test_effective_payload_audit_uses_real_prepare_path_after_lazy_init(
+    monkeypatch,
+):
+    class FakeLLM:
+        model = "openai/openhands-local"
+
+        @staticmethod
+        def uses_responses_api():
+            return False
+
+        def _prepare_completion_params(
+            self,
+            messages,
+            tools,
+            add_security_risk_prediction,
+            kwargs,
+            call_context=None,
+        ):
+            assert messages == ["prepared-message-objects"]
+            assert tools == ["terminal-tool"]
+            assert add_security_risk_prediction is False
+            assert kwargs == {}
+            assert call_context == "call-context"
+            return (
+                [
+                    {"role": "system", "content": "PROJECT BRAIN"},
+                    {"role": "user", "content": "audit probe"},
+                ],
+                [],
+                False,
+                {
+                    "tools": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "terminal",
+                                "description": "Run a command",
+                                "parameters": {"type": "object"},
+                            },
+                        }
+                    ]
+                },
+                {},
+            )
+
+    class FakeAgent:
+        def __init__(self, initialized: bool):
+            self.initialized = initialized
+            self.llm = FakeLLM()
+            self.tools_map = {"terminal": "terminal-tool"}
+
+        def _prepare_llm_messages(self, conversation, additional_messages=None):
+            assert self.initialized
+            assert additional_messages[0].role == "user"
+            assert additional_messages[0].content[0].text == "audit probe"
+            return ["prepared-message-objects"]
+
+    stale_agent = FakeAgent(initialized=False)
+    initialized_agent = FakeAgent(initialized=True)
+    state = MagicMock()
+    state.last_user_message_id = None
+    state.execution_status = ConversationExecutionStatus.IDLE
+    state.security_analyzer = None
+
+    class FakeConversation:
+        def __init__(self):
+            self.agent = stale_agent
+            self._state = state
+
+        def _ensure_agent_ready(self):
+            self.agent = initialized_agent
+
+        @staticmethod
+        def get_llm_call_context():
+            return "call-context"
+
+    monkeypatch.setattr("openhands.agent_server.event_service.Agent", FakeAgent)
+
+    result = EventService._inspect_effective_payload_sync(
+        FakeConversation(),
+        "audit probe",
+    )
+
+    assert result.model == "openai/openhands-local"
+    assert result.messages[0]["content"] == "PROJECT BRAIN"
+    assert result.tools[0]["function"]["name"] == "terminal"
+    assert result.use_mock_tools is False
+    assert result.security_risk_prediction is False
+
+
 def test_prime_prompt_cache_uses_agent_after_lazy_initialization(monkeypatch):
     zero_usage = SimpleNamespace(
         prompt_tokens=0,
