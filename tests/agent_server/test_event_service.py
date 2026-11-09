@@ -4164,7 +4164,7 @@ def test_effective_payload_audit_uses_real_prepare_path_after_lazy_init(
     initialized_agent = FakeAgent(initialized=True)
     state = MagicMock()
     state.last_user_message_id = None
-    state.execution_status = ConversationExecutionStatus.IDLE
+    state.execution_status = ConversationExecutionStatus.FINISHED
     state.security_analyzer = None
 
     class FakeConversation:
