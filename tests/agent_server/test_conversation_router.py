@@ -22,6 +22,7 @@ from openhands.agent_server.models import (
     ConversationRuntimeInfo,
     ConversationRuntimeStatus,
     ConversationSortOrder,
+    EffectivePayloadAuditResponse,
     PromptCachePrimeProbeMetrics,
     PromptCachePrimeResponse,
     SendMessageRequest,
@@ -3244,6 +3245,53 @@ def test_condense_conversation_without_condenser_returns_409(
         )
     finally:
         client.app.dependency_overrides.clear()
+
+
+def test_effective_payload_audit_returns_prepared_messages_and_tools(
+    client, mock_conversation_service, mock_event_service
+):
+    conversation_id = uuid4()
+    mock_conversation_service.get_event_service.return_value = mock_event_service
+    mock_event_service.inspect_effective_payload.return_value = (
+        EffectivePayloadAuditResponse(
+            model="openai/openhands-local",
+            messages=[
+                {"role": "system", "content": "PROJECT BRAIN"},
+                {"role": "user", "content": "audit probe"},
+            ],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "terminal",
+                        "description": "Run a command",
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
+            use_mock_tools=False,
+            security_risk_prediction=False,
+        )
+    )
+    client.app.dependency_overrides[get_conversation_service] = (
+        lambda: mock_conversation_service
+    )
+    try:
+        response = client.post(
+            f"/api/conversations/{conversation_id}/effective-payload/audit",
+            json={"probe_text": "audit probe"},
+        )
+    finally:
+        client.app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["messages"][0]["content"] == "PROJECT BRAIN"
+    assert payload["tools"][0]["function"]["name"] == "terminal"
+    assert payload["security_risk_prediction"] is False
+    mock_event_service.inspect_effective_payload.assert_awaited_once_with(
+        "audit probe"
+    )
 
 
 def test_prime_prompt_cache_returns_server_reported_cache_hit(
