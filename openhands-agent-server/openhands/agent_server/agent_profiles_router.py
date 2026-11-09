@@ -428,7 +428,10 @@ async def save_agent_profile(
     try:
         with store_errors():
             save_profile_preserving_identity(
-                store, profile, max_profiles=MAX_AGENT_PROFILES
+                store,
+                profile,
+                max_profiles=MAX_AGENT_PROFILES,
+                preserve_system_prompt="system_prompt" not in body,
             )
     except ProfileLimitExceeded:
         raise HTTPException(
