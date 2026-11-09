@@ -443,9 +443,9 @@ def save_profile_preserving_identity(
     with store.lock():
         existing_id, existing_rev = _existing_identity(store, profile.name)
         if existing_id is not None:
-            if preserve_system_prompt and isinstance(profile, OpenHandsAgentProfile):
+            if preserve_system_prompt and profile.agent_kind == "openhands":
                 existing = store.load(profile.name)
-                if isinstance(existing, OpenHandsAgentProfile):
+                if existing.agent_kind == "openhands":
                     profile = profile.model_copy(
                         update={"system_prompt": existing.system_prompt}
                     )
