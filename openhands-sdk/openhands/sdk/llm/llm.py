@@ -3544,6 +3544,13 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
     def to_persisted(self, *, context: dict[str, Any] | None = None) -> dict[str, Any]:
         """Serialize this LLM for profile persistence."""
         data = self.model_dump(mode="json", exclude_none=True, context=context)
+        # These nullable timeout fields use None as an active configuration value
+        # (disable the corresponding timeout), so omission is not equivalent:
+        # omission restores model defaults during profile reload.
+        if self.timeout is None:
+            data["timeout"] = None
+        if self.stream_idle_timeout is None:
+            data["stream_idle_timeout"] = None
         if data.get("auth_type") == "subscription":
             data.pop("api_key", None)
             data.pop("base_url", None)

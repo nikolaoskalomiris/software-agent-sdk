@@ -253,6 +253,56 @@ def test_save_writes_valid_json(
     assert data["temperature"] == 0.7
 
 
+def test_save_load_preserves_disabled_hard_timeout(
+    profile_store: LLMProfileStore,
+) -> None:
+    """Explicit timeout=None must survive profile persistence."""
+    llm = LLM(
+        usage_id="long-local-run",
+        model="openai/openhands-local",
+        timeout=None,
+        stream_idle_timeout=3600,
+        num_retries=0,
+    )
+
+    profile_store.save("long-local-run", llm)
+
+    profile_path = profile_store.base_dir / "long-local-run.json"
+    data = json.loads(profile_path.read_text())
+    assert "timeout" in data
+    assert data["timeout"] is None
+    assert data["stream_idle_timeout"] == 3600
+    assert data["num_retries"] == 0
+
+    loaded = profile_store.load("long-local-run")
+    assert loaded.timeout is None
+    assert loaded.stream_idle_timeout == 3600
+    assert loaded.num_retries == 0
+
+
+def test_save_load_preserves_disabled_stream_idle_timeout(
+    profile_store: LLMProfileStore,
+) -> None:
+    """Explicit stream_idle_timeout=None must survive profile persistence."""
+    llm = LLM(
+        usage_id="no-idle-timeout",
+        model="openai/openhands-local",
+        timeout=300,
+        stream_idle_timeout=None,
+    )
+
+    profile_store.save("no-idle-timeout", llm)
+
+    profile_path = profile_store.base_dir / "no-idle-timeout.json"
+    data = json.loads(profile_path.read_text())
+    assert "stream_idle_timeout" in data
+    assert data["stream_idle_timeout"] is None
+
+    loaded = profile_store.load("no-idle-timeout")
+    assert loaded.timeout == 300
+    assert loaded.stream_idle_timeout is None
+
+
 def test_save_with_json_extension(
     profile_store: LLMProfileStore, sample_llm: LLM
 ) -> None:
