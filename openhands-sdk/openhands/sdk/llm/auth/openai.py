@@ -123,6 +123,7 @@ CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 ISSUER = "https://auth.openai.com"
 JWKS_URL = f"{ISSUER}/.well-known/jwks.json"
 CODEX_API_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses"
+CHATGPT_USAGE_ENDPOINT = "https://chatgpt.com/backend-api/wham/usage"
 DEFAULT_OAUTH_PORT = 1455
 OAUTH_TIMEOUT_SECONDS = 300  # 5 minutes
 DEVICE_CODE_TIMEOUT_SECONDS = 900  # 15 minutes
@@ -746,6 +747,37 @@ class OpenAISubscriptionAuth:
     def extract_chatgpt_account_id(self, credentials: OAuthCredentials) -> str | None:
         """Return the ChatGPT account id for request headers, if present."""
         return _extract_chatgpt_account_id(credentials.access_token)
+
+    async def get_usage(self) -> dict[str, Any]:
+        """Fetch current ChatGPT Codex usage without exposing OAuth credentials.
+
+        The ChatGPT backend usage route is first-party but not a public OpenAI API
+        compatibility contract. Callers must therefore treat this as best-effort
+        telemetry and never make model availability depend on its schema.
+        """
+        credentials = await self.refresh_if_needed()
+        if credentials is None:
+            raise ValueError("OpenAI subscription login is required")
+
+        account_id = self.extract_chatgpt_account_id(credentials)
+        headers = {
+            "Authorization": f"Bearer {credentials.access_token}",
+            "Accept": "application/json",
+            "Origin": "https://chatgpt.com",
+            "Referer": "https://chatgpt.com/",
+            "User-Agent": f"openhands-sdk ({platform.system()}; {platform.machine()})",
+        }
+        if account_id:
+            headers["ChatGPT-Account-Id"] = account_id
+
+        async with AsyncClient(timeout=10) as client:
+            response = await client.get(CHATGPT_USAGE_ENDPOINT, headers=headers)
+            response.raise_for_status()
+            payload = response.json()
+
+        if not isinstance(payload, dict):
+            raise RuntimeError("Unexpected ChatGPT usage response")
+        return payload
 
     def logout(self) -> bool:
         """Remove stored credentials.

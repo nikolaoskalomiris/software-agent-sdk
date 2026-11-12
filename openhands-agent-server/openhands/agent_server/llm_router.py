@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from openhands.sdk.llm.auth.openai import (
     DEVICE_CODE_TIMEOUT_SECONDS,
@@ -92,6 +92,43 @@ class SubscriptionModelsResponse(BaseModel):
 
     vendor: str = "openai"
     models: list[str]
+
+
+class SubscriptionUsageWindow(BaseModel):
+    """One provider-reported usage window."""
+
+    used_percent: float | None = None
+    reset_at: int | None = None
+    limit_window_seconds: int | None = None
+
+
+class SubscriptionCredits(BaseModel):
+    """Safe purchased-credit metadata from the ChatGPT usage response."""
+
+    has_credits: bool | None = None
+    unlimited: bool | None = None
+    balance: float | None = None
+
+
+class SubscriptionUsageResponse(BaseModel):
+    """Best-effort ChatGPT Codex usage telemetry without OAuth secrets."""
+
+    vendor: str = "openai"
+    available: bool
+    plan_type: str | None = None
+    primary_window: SubscriptionUsageWindow | None = None
+    secondary_window: SubscriptionUsageWindow | None = None
+    credits: SubscriptionCredits | None = None
+    error: str | None = None
+
+
+def _safe_usage_model(model_type: type[BaseModel], value: object) -> BaseModel | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        return model_type.model_validate(value)
+    except ValidationError:
+        return None
 
 
 def _get_openai_subscription_auth() -> OpenAISubscriptionAuth:
@@ -189,6 +226,56 @@ async def get_openai_subscription_status() -> SubscriptionStatusResponse:
         # (httpx transport error) both leave no usable login right now.
         return SubscriptionStatusResponse(connected=False)
     return _status_from_auth(auth)
+
+
+@llm_router.get(
+    "/subscription/openai/usage", response_model=SubscriptionUsageResponse
+)
+async def get_openai_subscription_usage() -> SubscriptionUsageResponse:
+    """Return best-effort ChatGPT Codex usage windows and credit balance.
+
+    The provider endpoint is an internal ChatGPT surface, so failures or schema
+    drift are reported as safe telemetry errors rather than breaking launch.
+    """
+    auth = _get_openai_subscription_auth()
+    try:
+        payload = await auth.get_usage()
+    except ValueError:
+        return SubscriptionUsageResponse(available=False, error="not_connected")
+    except httpx.HTTPStatusError as exc:
+        upstream_status = exc.response.status_code
+        error = (
+            "authorization_rejected"
+            if upstream_status in {401, 403}
+            else "usage_unavailable"
+        )
+        return SubscriptionUsageResponse(available=False, error=error)
+    except (RuntimeError, httpx.HTTPError):
+        return SubscriptionUsageResponse(available=False, error="usage_unavailable")
+
+    rate_limit = payload.get("rate_limit")
+    if not isinstance(rate_limit, dict):
+        rate_limit = {}
+
+    primary = _safe_usage_model(
+        SubscriptionUsageWindow, rate_limit.get("primary_window")
+    )
+    secondary = _safe_usage_model(
+        SubscriptionUsageWindow, rate_limit.get("secondary_window")
+    )
+    credits = _safe_usage_model(SubscriptionCredits, payload.get("credits"))
+
+    return SubscriptionUsageResponse(
+        available=True,
+        plan_type=payload.get("plan_type")
+        if isinstance(payload.get("plan_type"), str)
+        else None,
+        primary_window=primary if isinstance(primary, SubscriptionUsageWindow) else None,
+        secondary_window=secondary
+        if isinstance(secondary, SubscriptionUsageWindow)
+        else None,
+        credits=credits if isinstance(credits, SubscriptionCredits) else None,
+    )
 
 
 @llm_router.post(

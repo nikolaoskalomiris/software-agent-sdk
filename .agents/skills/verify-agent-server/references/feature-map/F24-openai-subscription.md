@@ -8,8 +8,10 @@ opaque polling token), shows the user code and verification URL to a human,
 and polls until the human approves; the server then stores the OAuth tokens
 in `OH_PERSISTENCE_DIR/auth/openai_oauth.json` and never returns them. Status
 says whether a usable login is stored (refreshing an expired one over the
-network), logout deletes it and cancels pending logins, and a models route
-lists the Codex models a subscription can use.
+network), logout deletes it and cancels pending logins, a models route lists
+the Codex models a subscription can use, and a best-effort usage route reports
+the provider's current rate-limit windows and purchased-credit balance without
+returning OAuth credentials.
 
 Source: `openhands-agent-server/openhands/agent_server/llm_router.py`, `openhands-sdk/openhands/sdk/llm/auth/openai.py`, `openhands-sdk/openhands/sdk/llm/auth/credentials.py`, `clients/typescript/src/client/llm-client.ts`
 
@@ -17,6 +19,7 @@ Needs: `node`, `network`
 
 Routes: `GET /api/llm/subscription/openai/models`,
 `GET /api/llm/subscription/openai/status`,
+`GET /api/llm/subscription/openai/usage`,
 `POST /api/llm/subscription/openai/device/start`,
 `POST /api/llm/subscription/openai/device/poll`,
 `POST /api/llm/subscription/openai/logout`
@@ -26,7 +29,8 @@ Routes: `GET /api/llm/subscription/openai/models`,
 - `F24.models`: `GET /api/llm/subscription/openai/models` answers `vendor: openai` and the SDK's subscription allowlist (`OPENAI_CODEX_MODELS`), sorted.
 - `F24.status-disconnected`: with no stored login, status answers 200 `connected: false` with `account_email` and `expires_at` null, without network, and tightens the `auth/` directory to mode 700 without creating a credentials file.
 - `F24.status-connected`: a stored, unexpired login shows `connected: true` with its `expires_at`; neither token appears in the response and `account_email` stays null.
-- `F24.auth-required`: all five routes answer 401 without a key or with a wrong key, and a refused logout leaves the stored login in place.
+- `F24.usage`: with a usable login, the best-effort usage route normalizes the provider's primary/secondary rate-limit windows and optional credit balance; provider failure/schema drift returns `available: false` instead of breaking launch, and no OAuth token is returned.
+- `F24.auth-required`: all subscription routes answer 401 without a key or with a wrong key, and a refused logout leaves the stored login in place.
 - `F24.status-restart`: a stored login survives a server restart.
 - `F24.logout`: logout deletes the stored credentials file and answers `connected: false`; status agrees, and a second logout with nothing stored is still 200.
 - `F24.status-refresh-rejected`: a login that expires within 60 seconds makes status try a token refresh at `auth.openai.com`; when OpenAI rejects the refresh token, status answers 200 `connected: false` and keeps the file unchanged.

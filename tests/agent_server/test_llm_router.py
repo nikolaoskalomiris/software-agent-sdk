@@ -243,6 +243,93 @@ def test_openai_subscription_status_offline_refresh_reads_disconnected(
     }
 
 
+def test_openai_subscription_usage_endpoint_returns_safe_windows(
+    client, monkeypatch
+):
+    """Usage returns normalized windows/credits without exposing OAuth tokens."""
+    from openhands.agent_server import llm_router
+
+    class FakeAuth:
+        async def get_usage(self):
+            return {
+                "plan_type": "plus",
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 100,
+                        "reset_at": 1_794_498_018,
+                        "limit_window_seconds": 18_000,
+                    },
+                    "secondary_window": {
+                        "used_percent": 42,
+                        "reset_at": 1_795_000_000,
+                        "limit_window_seconds": 604_800,
+                    },
+                },
+                "credits": {
+                    "has_credits": False,
+                    "unlimited": False,
+                    "balance": 0,
+                },
+                "access_token": "must-not-leak",
+            }
+
+    monkeypatch.setattr(llm_router, "_get_openai_subscription_auth", FakeAuth)
+
+    response = client.get("/api/llm/subscription/openai/usage")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["available"] is True
+    assert data["plan_type"] == "plus"
+    assert data["primary_window"]["used_percent"] == 100
+    assert data["primary_window"]["limit_window_seconds"] == 18_000
+    assert data["secondary_window"]["limit_window_seconds"] == 604_800
+    assert data["credits"]["balance"] == 0
+    assert "must-not-leak" not in response.text
+
+
+def test_openai_subscription_usage_endpoint_is_best_effort(client, monkeypatch):
+    """Provider telemetry failure does not become a server error."""
+    from openhands.agent_server import llm_router
+
+    class FakeAuth:
+        async def get_usage(self):
+            request = httpx.Request("GET", "https://chatgpt.example/usage")
+            response = httpx.Response(503, request=request)
+            raise httpx.HTTPStatusError(
+                "upstream unavailable", request=request, response=response
+            )
+
+    monkeypatch.setattr(llm_router, "_get_openai_subscription_auth", FakeAuth)
+
+    response = client.get("/api/llm/subscription/openai/usage")
+
+    assert response.status_code == 200
+    assert response.json()["available"] is False
+    assert response.json()["error"] == "usage_unavailable"
+
+
+def test_openai_subscription_usage_rejected_is_distinct(client, monkeypatch):
+    """A usage 401/403 is distinct so the launcher can offer optional re-login."""
+    from openhands.agent_server import llm_router
+
+    class FakeAuth:
+        async def get_usage(self):
+            request = httpx.Request("GET", "https://chatgpt.example/usage")
+            response = httpx.Response(401, request=request)
+            raise httpx.HTTPStatusError(
+                "unauthorized", request=request, response=response
+            )
+
+    monkeypatch.setattr(llm_router, "_get_openai_subscription_auth", FakeAuth)
+
+    response = client.get("/api/llm/subscription/openai/usage")
+
+    assert response.status_code == 200
+    assert response.json()["available"] is False
+    assert response.json()["error"] == "authorization_rejected"
+
+
 def test_openai_subscription_device_start_returns_opaque_poll_token(
     client, monkeypatch
 ):
