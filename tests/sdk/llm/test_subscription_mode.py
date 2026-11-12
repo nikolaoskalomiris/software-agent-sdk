@@ -153,6 +153,7 @@ def test_non_subscription_does_not_send_codex_session_headers():
     assert "session-id" not in opts["extra_headers"]
     assert "thread-id" not in opts["extra_headers"]
 
+
 def test_non_subscription_does_not_invent_temperature():
     llm = LLM(model="openai/gpt-5.4", reasoning_effort="high")
 
