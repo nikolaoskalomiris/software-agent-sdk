@@ -241,7 +241,7 @@ async def get_openai_subscription_usage() -> SubscriptionUsageResponse:
     try:
         payload = await auth.get_usage()
     except ValueError:
-        return SubscriptionUsageResponse(available=False, error="not_connected")
+        return SubscriptionUsageResponse(available=False, error="usage_unavailable")
     except httpx.HTTPStatusError as exc:
         upstream_status = exc.response.status_code
         error = (
