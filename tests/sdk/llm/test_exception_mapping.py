@@ -5,6 +5,7 @@ from litellm.exceptions import (
     ContentPolicyViolationError,
     InternalServerError,
     PermissionDeniedError,
+    RateLimitError,
 )
 
 from openhands.sdk.llm.exceptions import (
@@ -12,6 +13,7 @@ from openhands.sdk.llm.exceptions import (
     LLMBadRequestError,
     LLMContentPolicyViolationError,
     LLMMalformedConversationHistoryError,
+    LLMRateLimitError,
     map_provider_exception,
 )
 
@@ -109,6 +111,44 @@ def test_map_generic_bad_request():
     assert isinstance(mapped, LLMBadRequestError)
     # A generic 400 must NOT be misclassified as content-policy.
     assert not isinstance(mapped, LLMContentPolicyViolationError)
+
+
+def test_map_openai_subscription_usage_limit_to_friendly_message():
+    e = RateLimitError(
+        message=(
+            'OpenAIException - {"error":{"type":"usage_limit_reached",'
+            '"message":"The usage limit has been reached","plan_type":"plus",'
+            '"resets_at":1794498018,"eligible_promo":null,'
+            '"limit_window_minutes":300,"resets_in_seconds":10446}}'
+        ),
+        llm_provider="openai",
+        model="gpt-6.1-sol",
+    )
+
+    mapped = map_provider_exception(e)
+
+    assert isinstance(mapped, LLMRateLimitError)
+    message = str(mapped)
+    assert "ChatGPT Plus usage limit reached." in message
+    assert "resets in about 2h 55m" in message
+    assert "Current usage window: 300 minutes." in message
+    assert "not an authentication failure" in message
+    assert "reauthorization is not required" in message
+    assert "Settings > Usage" in message
+    assert "OpenAIException" not in message
+
+
+def test_map_generic_rate_limit_keeps_provider_message():
+    e = RateLimitError(
+        message="ordinary provider rate limit",
+        llm_provider="openai",
+        model="gpt-4o",
+    )
+
+    mapped = map_provider_exception(e)
+
+    assert isinstance(mapped, LLMRateLimitError)
+    assert "ordinary provider rate limit" in str(mapped)
 
 
 def test_passthrough_unknown_exception():
