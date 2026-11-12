@@ -70,6 +70,7 @@ def apply_llm_call_context(
     *,
     supports_prompt_cache_key: bool = False,
     openrouter: bool = False,
+    codex_subscription: bool = False,
 ) -> None:
     """Apply SDK-owned call context to provider request options in one place.
 
@@ -91,6 +92,9 @@ def apply_llm_call_context(
             **existing,
             "x-litellm-session-id": context.session_id,
         }
+        if codex_subscription:
+            options["extra_headers"]["session-id"] = context.session_id
+            options["extra_headers"]["thread-id"] = context.session_id
         if openrouter:
             # Merge rather than replace: extra_body may already carry caller
             # routing (e.g. provider.only) that must survive. An explicit
