@@ -792,6 +792,12 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
     # a result, so the read/check and store are kept atomic. ClassVar (shared);
     # critical sections are tiny and never cover network I/O.
     _runtime_metadata_lock: ClassVar[threading.Lock] = threading.Lock()
+    # Diagnostic-only Responses API prefix history. Prompt contents are never
+    # retained here: only per-input-item SHA-256 fingerprints are kept in memory.
+    _responses_trace_item_hashes: dict[str, tuple[str, ...]] = PrivateAttr(
+        default_factory=dict
+    )
+    _responses_trace_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
     # Optional callback that returns a freshly-resolved API key. When set, an
     # authentication failure (HTTP 401, e.g. a rotated/healed managed proxy key
     # that LiteLLM reports as ``token_not_found_in_db``) triggers a single
@@ -2165,6 +2171,10 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
             call_context=call_context,
         )
 
+        responses_trace = self._start_responses_transport_trace(
+            input_items, instructions, resp_tools, call_kwargs
+        )
+
         @self._make_retry_decorator()
         def _one_attempt(**retry_kwargs: Any) -> ResponsesAPIResponse:
             assert self._telemetry is not None
@@ -2223,8 +2233,11 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
             raise AssertionError(f"Expected ResponsesAPIResponse, got {type(ret)}")
 
         try:
-            return self._build_responses_result(_one_attempt())
+            raw_response = _one_attempt()
+            self._finish_responses_transport_trace(responses_trace, raw_response)
+            return self._build_responses_result(raw_response)
         except Exception as e:
+            self._fail_transport_trace(responses_trace, e)
             # If the prompt cache content is too small for the provider's
             # minimum token threshold (e.g., Vertex AI requires ≥4096 tokens),
             # retry without prompt caching markers.
@@ -2330,6 +2343,10 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
             call_context=call_context,
         )
 
+        responses_trace = self._start_responses_transport_trace(
+            input_items, instructions, resp_tools, call_kwargs
+        )
+
         @self._make_retry_decorator()
         @self._async_hard_timeout_decorator()
         async def _one_attempt(
@@ -2415,8 +2432,11 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
             raise AssertionError(f"Expected ResponsesAPIResponse, got {type(ret)}")
 
         try:
-            return self._build_responses_result(await _one_attempt())
+            raw_response = await _one_attempt()
+            self._finish_responses_transport_trace(responses_trace, raw_response)
+            return self._build_responses_result(raw_response)
         except Exception as e:
+            self._fail_transport_trace(responses_trace, e)
             # If the prompt cache content is too small for the provider's
             # minimum token threshold (e.g., Vertex AI requires ≥4096 tokens),
             # retry without prompt caching markers.
@@ -2656,6 +2676,120 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
             fields["tool_count"],
         )
         return trace
+
+    def _start_responses_transport_trace(
+        self,
+        input_items: Sequence[Mapping[str, Any]],
+        instructions: str | None,
+        tools: Sequence[object] | None,
+        kwargs: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Log content-free Responses fingerprints and prefix continuity."""
+        extra_headers = kwargs.get("extra_headers") or {}
+        conversation_id = None
+        if isinstance(extra_headers, Mapping):
+            for name, value in extra_headers.items():
+                if str(name).lower() == "x-litellm-session-id":
+                    conversation_id = value
+                    break
+        if not conversation_id:
+            from openhands.sdk.llm.call_context import resolve_llm_call_context
+
+            conversation_id = resolve_llm_call_context(None).session_id
+        conversation_id = str(conversation_id or "unknown")
+
+        item_hashes = tuple(_stable_json_sha256(item) for item in input_items)
+        with self._responses_trace_lock:
+            previous = self._responses_trace_item_hashes.get(conversation_id, ())
+            common_prefix_items = 0
+            for current_hash, previous_hash in zip(item_hashes, previous):
+                if current_hash != previous_hash:
+                    break
+                common_prefix_items += 1
+            self._responses_trace_item_hashes[conversation_id] = item_hashes
+
+        previous_count = len(previous)
+        previous_is_prefix = (
+            previous_count > 0 and common_prefix_items == previous_count
+        )
+        trace = {
+            "request_id": uuid.uuid4().hex[:12],
+            "started_at": time.perf_counter(),
+            "origin": _request_origin(),
+            "conversation_id": conversation_id,
+            "model": kwargs.get("model", self.model),
+            "transport": "responses",
+            "input_item_count": len(item_hashes),
+            "previous_input_item_count": previous_count,
+            "common_prefix_items": common_prefix_items,
+            "previous_is_prefix": previous_is_prefix,
+        }
+        logger.info(
+            "LLM Responses request start request_id=%s origin=%s "
+            "conversation_id=%s model=%s provider=%s input_items=%d "
+            "previous_input_items=%d common_prefix_items=%d "
+            "previous_is_prefix=%s instructions_sha256=%s "
+            "first_input_item_sha256=%s tool_schema_sha256=%s tool_count=%d "
+            "prompt_cache_key_sha256=%s service_tier=%s",
+            trace["request_id"],
+            trace["origin"],
+            trace["conversation_id"],
+            trace["model"],
+            kwargs.get("custom_llm_provider") or "unknown",
+            len(item_hashes),
+            previous_count,
+            common_prefix_items,
+            previous_is_prefix,
+            _stable_json_sha256(instructions),
+            item_hashes[0] if item_hashes else None,
+            _stable_json_sha256(list(tools or ())),
+            len(tools or ()),
+            _stable_json_sha256(kwargs.get("prompt_cache_key"))
+            if kwargs.get("prompt_cache_key") is not None
+            else None,
+            kwargs.get("service_tier"),
+        )
+        return trace
+
+    def _finish_responses_transport_trace(
+        self, trace: Mapping[str, Any], response: ResponsesAPIResponse
+    ) -> None:
+        usage = _trace_value(response, "usage")
+        input_details = _trace_value(usage, "input_tokens_details")
+        output_details = _trace_value(usage, "output_tokens_details")
+        input_tokens = _trace_value(usage, "input_tokens")
+        cached_tokens = _trace_value(input_details, "cached_tokens")
+        cache_write_tokens = _trace_value(input_details, "cache_write_tokens")
+        output_tokens = _trace_value(usage, "output_tokens")
+        cache_ratio = None
+        if isinstance(input_tokens, int) and input_tokens > 0 and isinstance(
+            cached_tokens, int
+        ):
+            cache_ratio = cached_tokens / input_tokens
+        logger.info(
+            "LLM Responses request complete request_id=%s origin=%s "
+            "conversation_id=%s model=%s response_id=%s elapsed_ms=%.1f "
+            "input_items=%d previous_input_items=%d common_prefix_items=%d "
+            "previous_is_prefix=%s input_tokens=%s cached_tokens=%s "
+            "cache_write_tokens=%s cache_ratio=%s output_tokens=%s "
+            "reasoning_tokens=%s",
+            trace["request_id"],
+            trace["origin"],
+            trace["conversation_id"],
+            trace["model"],
+            _trace_value(response, "id"),
+            (time.perf_counter() - trace["started_at"]) * 1000,
+            trace["input_item_count"],
+            trace["previous_input_item_count"],
+            trace["common_prefix_items"],
+            trace["previous_is_prefix"],
+            input_tokens,
+            cached_tokens,
+            cache_write_tokens,
+            f"{cache_ratio:.4f}" if cache_ratio is not None else None,
+            output_tokens,
+            _trace_value(output_details, "reasoning_tokens"),
+        )
 
     def _finish_transport_trace(
         self, trace: Mapping[str, Any], response: ModelResponse
